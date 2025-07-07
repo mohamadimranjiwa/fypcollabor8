@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+  <meta name="description" content="FYPCollabor8 Landing Page">
+  <meta name="author" content="">
+
+  <title>FYPCollabor8 - FYP Diploma Management System</title>
+
+  <!-- Custom fonts for this template-->
+  <link href="vendor/fontawesome-free/css/all.min.css" rel="stylesheet" type="text/css">
+  <link href="https://fonts.googleapis.com/css?family=Nunito:200,200i,300,300i,400,400i,600,600i,700,700i,800,800i,900,900i" rel="stylesheet">
+
+  <!-- Custom styles for this template-->
+  <link href="css/sb-admin-2.min.css" rel="stylesheet">
+
+  <!-- Chart.js (local, with CDN fallback) -->
+  <script src="vendor/chart.js/Chart.min.js"></script>
+  <script>
+    // Fallback for Chart.js if local file fails
+    if (typeof Chart === 'undefined') {
+      document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/2.9.4/Chart.min.js"><\/script>');
+    }
+  </script>
+
+  <style>
+    .static-image-container {
+      position: relative;
+    }
+
+    .static-image-container img {
+      height: 650px;
+      object-fit: cover;
+      display: block;
+      width: 100%;
+    }
+
+    .image-caption {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      padding: 30px;
+      background: linear-gradient(to top, rgba(0, 0, 0, 0.7), transparent 100%);
+      text-align: left;
+    }
+
+    .image-caption h5 {
+      font-size: 2rem;
+      font-weight: bold;
+      color: #fff;
+    }
+
+    .image-caption p {
+      font-size: 1rem;
+      margin-top: 5px;
+      color: #fff;
+    }
+
+    /* Navbar styling */
+    .navbar {
+      box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+      background-color: #fff;
+    }
+
+    .navbar-brand {
+      font-weight: 700;
+      color: #4e73df !important;
+    }
+
+    .navbar-nav .nav-link {
+      font-size: 1rem;
+      color: #5a5c69;
+      transition: color 0.3s ease;
+    }
+
+    .navbar-nav .nav-link:hover {
+      color: #4e73df;
+    }
+
+    /* Clickable info card styling */
+    .clickable-card {
+      display: block;
+      color: inherit;
+      text-decoration: none;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .clickable-card:hover {
+      transform: translateY(-5px);
+      box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
+      cursor: pointer;
+      text-decoration: none;
+    }
+
+    /* Feedback card styling */
+    .feedback-card {
+      transition: opacity 0.3s ease, transform 0.2s ease;
+    }
+
+    .feedback-card:hover {
+      opacity: 0.9;
+      transform: translateY(-2px);
+    }
+
+    .feedback-card .fa-star {
+      margin-right: 3px;
+    }
+
+    /* FAQ accordion styling */
+    .accordion .card {
+      border: none;
+      margin-bottom: 10px;
+    }
+
+    .accordion .card-header {
+      background-color: #4e73df;
+      color: white;
+      cursor: pointer;
+      padding: 1rem;
+      border-radius: 0.25rem;
+    }
+
+    .accordion .card-body {
+      background-color: #fff;
+      border: 1px solid #e3e6f0;
+      border-top: none;
+      border-radius: 0 0 0.25rem 0.25rem;
+    }
+
+    /* Chart styling */
+    .chart-area, .chart-pie {
+      position: relative;
+      height: 300px;
+    }
+
+    /* Responsive adjustments */
+    @media (max-width: 768px) {
+      .static-image-container img {
+        height: 300px;
+      }
+
+      .image-caption h5 {
+        font-size: 1.5rem;
+      }
+
+      .image-caption p {
+        font-size: 0.9rem;
+      }
+
+      .navbar-nav .nav-link {
+        font-size: 0.9rem;
+      }
+
+      .chart-area, .chart-pie {
+        height: 250px;
+      }
+    }
+  </style>
+</head>
+
+<body id="page-top">
+
+  <!-- Page Wrapper -->
+  <div id="wrapper">
+
+    <!-- Content Wrapper -->
+    <div id="content-wrapper" class="d-flex flex-column">
+
+      <!-- Main Content -->
+      <div id="content">
+
+        <!-- Navbar -->
+        <nav class="navbar navbar-expand-lg navbar-light mb-4">
+          <div class="container-fluid">
+            <a class="navbar-brand" href="index.html">FYPCollabor8</a>
+            <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarNav"
+              aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+              <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+              <ul class="navbar-nav ml-auto">
+                <li class="nav-item">
+                  <a class="nav-link" href="#past-student-projects">Past Student Projects</a>
+                </li>
+                <li class="nav-item">
+                  <a class="nav-link" href="#student-feedback">Student Feedback</a>
+                </li>
+                <li class="nav-item">
+                  <a class="nav-link" href="#faq">FAQ</a>
+                </li>
+                <li class="nav-item">
+                  <a class="nav-link" href="#impact">Our Impact</a>
+                </li>
+              </ul>
+            </div>
+          </div>
+        </nav>
+
+        <!-- Begin Page Content -->
+        <div class="container-fluid">
+
+          <!-- Static Image Section Start -->
+          <div class="static-image-container mb-5 rounded shadow">
+            <img class="d-block w-100" src="img/unikl.jpg" alt="FYPCollabor8"
+              onerror="this.src='https://source.unsplash.com/random/1200x400?project';">
+            <div class="image-caption d-none d-md-block">
+              <h5>FYPCollabor8: Centralized FYP Management</h5>
+              <p>Designed for UniKL MIIT Diploma Students, Supervisors, and Assessors.</p>
+            </div>
+          </div>
+          <!-- Static Image Section End -->
+
+          <!-- Info Cards Start -->
+          <div class="row">
+            <div class="col-lg-4 col-md-6 mb-4">
+              <a href="studentlogin.php" class="clickable-card">
+                <div class="card border-left-primary shadow h-100 py-2">
+                  <div class="card-body">
+                    <div class="row no-gutters align-items-center">
+                      <div class="col mr-2">
+                        <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">Student Login</div>
+                        <div class="h5 mb-0 font-weight-bold text-gray-800">Access your student dashboard</div>
+                      </div>
+                      <div class="col-auto">
+                        <i class="fas fa-user-graduate fa-2x text-gray-300"></i>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </a>
+            </div>
+
+            <div class="col-lg-4 col-md-6 mb-4">
+              <a href="lecturerlogin.php" class="clickable-card">
+                <div class="card border-left-success shadow h-100 py-2">
+                  <div class="card-body">
+                    <div class="row no-gutters align-items-center">
+                      <div class="col mr-2">
+                        <div class="text-xs font-weight-bold text-success text-uppercase mb-1">Lecturer Login</div>
+                        <div class="h5 mb-0 font-weight-bold text-gray-800">Manage your supervision tasks</div>
+                      </div>
+                      <div class="col-auto">
+                        <i class="fas fa-chalkboard-teacher fa-2x text-gray-300"></i>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </a>
+            </div>
+
+            <div class="col-lg-4 col-md-6 mb-4">
+              <a href="coordinatorlogin.php" class="clickable-card">
+                <div class="card border-left-info shadow h-100 py-2">
+                  <div class="card-body">
+                    <div class="row no-gutters align-items-center">
+                      <div class="col mr-2">
+                        <div class="text-xs font-weight-bold text-info text-uppercase mb-1">Coordinator Login</div>
+                        <div class="h5 mb-0 font-weight-bold text-gray-800">Oversee FYP operations</div>
+                      </div>
+                      <div class="col-auto">
+                        <i class="fas fa-folder-open fa-2x text-gray-300"></i>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </a>
+            </div>
+          </div>
+          <!-- Info Cards End -->
+
+          <!-- Project Cards Start -->
+          <h4 id="past-student-projects" class="my-5 font-weight-bold text-primary text-center">Past Student Projects</h4>
+          <div class="row">
+            <!-- Project Card 1 -->
+            <div class="col-lg-4 col-md-6 mb-4">
+              <div class="card shadow h-100">
+                <div class="card-header py-3">
+                  <h6 class="m-0 font-weight-bold text-primary">Smart Attendance System</h6>
+                </div>
+                <div class="card-body">
+                  <p>This project develops a smart attendance system using facial recognition to streamline attendance tracking, integrated with FYPCollabor8 for real-time updates.</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Project Card 2 -->
+            <div class="col-lg-4 col-md-6 mb-4">
+              <div class="card shadow h-100">
+                <div class="card-header py-3">
+                  <h6 class="m-0 font-weight-bold text-primary">IoT-Based Smart Classroom System</h6>
+                </div>
+                <div class="card-body">
+                  <p>The goal is to create an IoT-based system to automate classroom lighting and temperature, enhancing learning environments with monitoring through FYPCollabor8.</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Project Card 3 -->
+            <div class="col-lg-4 col-md-6 mb-4">
+              <div class="card shadow h-100">
+                <div class="card-header py-3">
+                  <h6 class="m-0 font-weight-bold text-primary">E-Learning Platform for Diploma Students</h6>
+                </div>
+                <div class="card-body">
+                  <p>This project focuses on building a web-based e-learning platform for UniKL diploma students, integrated with FYPCollabor8 for seamless resource sharing.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+          <!-- Project Cards End -->
+
+          <!-- Student Feedback Section Start -->
+          <h4 id="student-feedback" class="my-5 font-weight-bold text-primary text-center">Student Feedback</h4>
+          <div class="row">
+            <!-- Feedback Card 1 -->
+            <div class="col-lg-4 col-md-6 mb-4">
+              <div class="card shadow border-left-primary feedback-card h-100">
+                <div class="card-body p-4">
+                  <div class="d-flex align-items-center mb-3">
+                    <i class="fas fa-user-circle fa-2x text-gray-400 mr-2"></i>
+                    <h6 class="m-0 font-weight-bold text-gray-800">Ahmad Z.</h6>
+                  </div>
+                  <div class="mb-2">
+                    <i class="fas fa-star text-warning"></i>
+                    <i class="fas fa-star text-warning"></i>
+                    <i class="fas fa-star text-warning"></i>
+                    <i class="fas fa-star text-warning"></i>
+                    <i class="fas fa-star text-warning"></i>
+                  </div>
+                  <p class="text-gray-800 mb-2">FYPCollabor8 made project tracking so easy! The dashboard is user-friendly.</p>
+                  <small class="text-gray-600">May 2025</small>
+                </div>
+              </div>
+            </div>
+
+            <!-- Feedback Card 2 -->
+            <div class="col-lg-4 col-md-6 mb-4">
+              <div class="card shadow border-left-primary feedback-card h-100">
+                <div class="card-body p-4">
+                  <div class="d-flex align-items-center mb-3">
+                    <i class="fas fa-user-circle fa-2x text-gray-400 mr-2"></i>
+                    <h6 class="m-0 font-weight-bold text-gray-800">Siti R.</h6>
+                  </div>
+                  <div class="mb-2">
+                    <i class="fas fa-star text-warning"></i>
+                    <i class="fas fa-star text-warning"></i>
+                    <i class="fas fa-star text-warning"></i>
+                    <i class="fas fa-star text-warning"></i>
+                    <i class="far fa-star text-gray-400"></i>
+                  </div>
+                  <p class="text-gray-800 mb-2">Great platform, but I’d love more notification options.</p>
+                  <small class="text-gray-600">May 2025</small>
+                </div>
+              </div>
+            </div>
+
+            <!-- Feedback Card 3 -->
+            <div class="col-lg-4 col-md-6 mb-4">
+              <div class="card shadow border-left-primary feedback-card h-100">
+                <div class="card-body p-4">
+                  <div class="d-flex align-items-center mb-3">
+                    <i class="fas fa-user-circle fa-2x text-gray-400 mr-2"></i>
+                    <h6 class="m-0 font-weight-bold text-gray-800">Farid K.</h6>
+                  </div>
+                  <div class="mb-2">
+                    <i class="fas fa-star text-warning"></i>
+                    <i class="fas fa-star text-warning"></i>
+                    <i class="fas fa-star text-warning"></i>
+                    <i class="fas fa-star text-warning"></i>
+                    <i class="fas fa-star text-warning"></i>
+                  </div>
+                  <p class="text-gray-800 mb-2">The submission tracking is seamless and keeps me on track!</p>
+                  <small class="text-gray-600">May 2025</small>
+                </div>
+              </div>
+            </div>
+          </div>
+          <!-- Student Feedback Section End -->
+
+          <!-- FAQ Section Start -->
+          <h4 id="faq" class="my-5 font-weight-bold text-primary text-center">Frequently Asked Questions</h4>
+          <div class="row">
+            <div class="col-lg-8 offset-lg-2 col-md-10 offset-md-1">
+              <p class="text-gray-800 mb-4 text-center">Got questions? We’ve got answers!</p>
+              <div class="accordion" id="faqAccordion">
+                <!-- FAQ 1 -->
+                <div class="card shadow">
+                  <div class="card-header" id="faqHeading1">
+                    <h2 class="mb-0">
+                      <button class="btn btn-link text-white text-decoration-none w-100 text-left" type="button" data-toggle="collapse" data-target="#faqCollapse1" aria-expanded="true" aria-controls="faqCollapse1">
+                        What is FYPCollabor8?
+                      </button>
+                    </h2>
+                  </div>
+                  <div id="faqCollapse1" class="collapse show" aria-labelledby="faqHeading1" data-parent="#faqAccordion">
+                    <div class="card-body">
+                      FYPCollabor8 is a centralized platform designed for UniKL MIIT diploma students, supervisors, and assessors to manage Final Year Projects, including submission tracking, peer evaluation, and integrated communication.
+                    </div>
+                  </div>
+                </div>
+                <!-- FAQ 2 -->
+                <div class="card shadow">
+                  <div class="card-header" id="faqHeading2">
+                    <h2 class="mb-0">
+                      <button class="btn btn-link text-white text-decoration-none w-100 text-left collapsed" type="button" data-toggle="collapse" data-target="#faqCollapse2" aria-expanded="false" aria-controls="faqCollapse2">
+                        How do I submit my FYP proposal?
+                      </button>
+                    </h2>
+                  </div>
+                  <div id="faqCollapse2" class="collapse" aria-labelledby="faqHeading2" data-parent="#faqAccordion">
+                    <div class="card-body">
+                      Log in to your student dashboard, navigate to the submission section, and upload your proposal. You’ll receive confirmation and feedback from your supervisor through the platform.
+                    </div>
+                  </div>
+                </div>
+                <!-- FAQ 3 -->
+                <div class="card shadow">
+                  <div class="card-header" id="faqHeading3">
+                    <h2 class="mb-0">
+                      <button class="btn btn-link text-white text-decoration-none w-100 text-left collapsed" type="button" data-toggle="collapse" data-target="#faqCollapse3" aria-expanded="false" aria-controls="faqCollapse3">
+                        Can lecturers monitor student progress?
+                      </button>
+                    </h2>
+                  </div>
+                  <div id="faqCollapse3" class="collapse" aria-labelledby="faqHeading3" data-parent="#faqAccordion">
+                    <div class="card-body">
+                      Yes, lecturers can access a supervision dashboard to track student submissions, provide feedback, and monitor project milestones in real-time.
+                    </div>
+                  </div>
+                </div>
+                <!-- FAQ 4 -->
+                <div class="card shadow">
+                  <div class="card-header" id="faqHeading4">
+                    <h2 class="mb-0">
+                      <button class="btn btn-link text-white text-decoration-none w-100 text-left collapsed" type="button" data-toggle="collapse" data-target="#faqCollapse4" aria-expanded="false" aria-controls="faqCollapse4">
+                        How does FYPCollabor8 support peer evaluation?
+                      </button>
+                    </h2>
+                  </div>
+                  <div id="faqCollapse4" class="collapse" aria-labelledby="faqHeading4" data-parent="#faqAccordion">
+                    <div class="card-body">
+                      FYPCollabor8 allows students to evaluate their peers’ contributions through a structured evaluation form, ensuring fair assessment and collaboration within project teams.
+                    </div>
+                  </div>
+                </div>
+                <!-- FAQ 5 -->
+                <div class="card shadow">
+                  <div class="card-header" id="faqHeading5">
+                    <h2 class="mb-0">
+                      <button class="btn btn-link text-white text-decoration-none w-100 text-left collapsed" type="button" data-toggle="collapse" data-target="#faqCollapse5" aria-expanded="false" aria-controls="faqCollapse5">
+                        What browsers does FYPCollabor8 support?
+                      </button>
+                    </h2>
+                  </div>
+                  <div id="faqCollapse5" class="collapse" aria-labelledby="faqHeading5" data-parent="#faqAccordion">
+                    <div class="card-body">
+                      FYPCollabor8 supports the latest versions of Chrome, Firefox, Safari, and Edge for the best user experience.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <!-- FAQ Section End -->
+
+          <!-- Impact Section Start -->
+          <h4 id="impact" class="my-5 font-weight-bold text-primary text-center">Our Impact</h4>
+          <div class="row">
+            <!-- Area Chart -->
+            <div class="col-xl-8 col-lg-7">
+              <div class="card shadow mb-4">
+                <!-- Card Header -->
+                <div class="card-header py-3">
+                  <h6 class="m-0 font-weight-bold text-primary">Project Submissions Over Time</h6>
+                </div>
+                <!-- Card Body -->
+                <div class="card-body">
+                  <div class="chart-area">
+                    <canvas id="myAreaChart"></canvas>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <!-- Pie Chart -->
+            <div class="col-xl-4 col-lg-5">
+              <div class="card shadow mb-4">
+                <!-- Card Header -->
+                <div class="card-header py-3">
+                  <h6 class="m-0 font-weight-bold text-primary">User Role Distribution</h6>
+                </div>
+                <!-- Card Body -->
+                <div class="card-body">
+                  <div class="chart-pie pt-4 pb-2">
+                    <canvas id="myPieChart"></canvas>
+                  </div>
+                  <div class="mt-4 text-center small">
+                    <span class="mr-2">
+                      <i class="fas fa-circle text-primary"></i> Students
+                    </span>
+                    <span class="mr-2">
+                      <i class="fas fa-circle text-success"></i> Lecturers
+                    </span>
+                    <span class="mr-2">
+                      <i class="fas fa-circle text-info"></i> Coordinators
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <!-- Impact Section End -->
+
+        </div>
+        <!-- End Page Content -->
+
+      </div>
+      <!-- End Main Content -->
+
+      <!-- Footer -->
+      <footer class="sticky-footer bg-white">
+        <div class="container my-auto">
+          <div class="copyright text-center my-auto">
+            <span>Copyright © FYPCollabor8 2025</span>
+          </div>
+        </div>
+      </footer>
+      <!-- End Footer -->
+
+    </div>
+    <!-- End Content Wrapper -->
+
+  </div>
+  <!-- End Page Wrapper -->
+
+  <!-- Scroll to Top Button-->
+  <a class="scroll-to-top rounded" href="#page-top">
+    <i class="fas fa-angle-up"></i>
+  </a>
+
+  <!-- Bootstrap core JavaScript-->
+  <script src="vendor/jquery/jquery.min.js"></script>
+  <script src="vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
+
+  <!-- Core plugin JavaScript-->
+  <script src="vendor/jquery-easing/jquery.easing.min.js"></script>
+
+  <!-- Custom scripts for all pages-->
+  <script src="js/sb-admin-2.min.js"></script>
+
+  <!-- Chart scripts -->
+  <script>
+    $(document).ready(function () {
+      // Smooth scrolling for anchor links
+      try {
+        $('a[href*="#"]').not('[href="#"]').click(function (event) {
+          if (
+            location.pathname.replace(/^\//, '') == this.pathname.replace(/^\//, '') &&
+            location.hostname == this.hostname
+          ) {
+            event.preventDefault();
+            var target = $(this.hash);
+            target = target.length ? target : $('[name=' + this.hash.slice(1) + ']');
+            if (target.length) {
+              $('html, body').animate({
+                scrollTop: target.offset().top - 70 // Adjust for navbar height
+              }, 1000, 'easeInOutExpo');
+              return false;
+            }
+          }
+        });
+      } catch (e) {
+        console.error('Smooth scrolling failed:', e);
+      }
+
+      // Area Chart
+      try {
+        var ctx = document.getElementById("myAreaChart").getContext('2d');
+        var myAreaChart = new Chart(ctx, {
+          type: 'line',
+          data: {
+            labels: ["Jan 2025", "Feb 2025", "Mar 2025", "Apr 2025", "May 2025"],
+            datasets: [{
+              label: "Submissions",
+              lineTension: 0.3,
+              backgroundColor: "rgba(78, 115, 223, 0.05)",
+              borderColor: "rgba(78, 115, 223, 1)",
+              pointRadius: 3,
+              pointBackgroundColor: "rgba(78, 115, 223, 1)",
+              pointBorderColor: "rgba(78, 115, 223, 1)",
+              pointHoverRadius: 3,
+              pointHoverBackgroundColor: "rgba(78, 115, 223, 1)",
+              pointHoverBorderColor: "rgba(78, 115, 223, 1)",
+              pointHitRadius: 10,
+              pointBorderWidth: 2,
+              data: [10, 20, 30, 40, 50],
+            }],
+          },
+          options: {
+            maintainAspectRatio: false,
+            layout: {
+              padding: {
+                left: 10,
+                right: 25,
+                top: 25,
+                bottom: 0
+              }
+            },
+            scales: {
+              xAxes: [{
+                gridLines: {
+                  display: false,
+                  drawBorder: false
+                },
+                ticks: {
+                  maxTicksLimit: 5
+                }
+              }],
+              yAxes: [{
+                ticks: {
+                  maxTicksLimit: 5,
+                  padding: 10,
+                  callback: function(value, index, values) {
+                    return value + ' submissions';
+                  }
+                },
+                gridLines: {
+                  color: "rgb(234, 236, 244)",
+                  zeroLineColor: "rgb(234, 236, 244)",
+                  drawBorder: false,
+                  borderDash: [2],
+                  zeroLineBorderDash: [2]
+                }
+              }],
+            },
+            legend: {
+              display: false
+            },
+            tooltips: {
+              backgroundColor: "rgb(255,255,255)",
+              bodyFontColor: "#858796",
+              titleMarginBottom: 10,
+              titleFontColor: '#6e707e',
+              titleFontSize: 14,
+              borderColor: '#dddfeb',
+              borderWidth: 1,
+              xPadding: 15,
+              yPadding: 15,
+              displayColors: false,
+              intersect: false,
+              mode: 'index',
+              caretPadding: 10,
+              callbacks: {
+                label: function(tooltipItem, chart) {
+                  var datasetLabel = chart.datasets[tooltipItem.datasetIndex].label || '';
+                  return datasetLabel + ': ' + tooltipItem.yLabel + ' submissions';
+                }
+              }
+            }
+          }
+        });
+      } catch (e) {
+        console.error('Area Chart initialization failed:', e);
+      }
+
+      // Pie Chart
+      try {
+        var ctx = document.getElementById("myPieChart").getContext('2d');
+        var myPieChart = new Chart(ctx, {
+          type: 'doughnut',
+          data: {
+            labels: ["Students", "Lecturers", "Coordinators"],
+            datasets: [{
+              data: [70, 20, 10],
+              backgroundColor: ['#4e73df', '#1cc88a', '#36b9cc'],
+              hoverBackgroundColor: ['#2e59d9', '#17a673', '#2c9faf'],
+              hoverBorderColor: "rgba(234, 236, 244, 1)",
+            }],
+          },
+          options: {
+            maintainAspectRatio: false,
+            tooltips: {
+              backgroundColor: "rgb(255,255,255)",
+              bodyFontColor: "#858796",
+              borderColor: '#dddfeb',
+              borderWidth: 1,
+              xPadding: 15,
+              yPadding: 15,
+              displayColors: false,
+              caretPadding: 10,
+            },
+            legend: {
+              display: false
+            },
+            cutoutPercentage: 80,
+          },
+        });
+      } catch (e) {
+        console.error('Pie Chart initialization failed:', e);
+      }
+    });
+  </script>
+</body>
+
+</html>
