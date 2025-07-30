@@ -1,65 +1,75 @@
-# [Start Bootstrap - SB Admin 2](https://startbootstrap.com/theme/sb-admin-2/)
+# 🎓 FYPCollabor8 – Final Year Project Diploma Management System
 
-[SB Admin 2](https://startbootstrap.com/theme/sb-admin-2/) is an open source admin dashboard theme for [Bootstrap](https://getbootstrap.com/) created by [Start Bootstrap](https://startbootstrap.com/).
+![PHP](https://img.shields.io/badge/Built%20with-PHP-blue)
+![MySQL](https://img.shields.io/badge/Database-MySQL-orange)
+![Bootstrap](https://img.shields.io/badge/Frontend-Bootstrap-green)
+![License](https://img.shields.io/badge/License-MIT-lightgrey)
 
-For the legacy Bootstrap 3 version of this theme, you can view the [last stable release](https://github.com/StartBootstrap/startbootstrap-sb-admin-2/releases/tag/v3.3.7%2B1) of SB Admin 2 for Bootstrap 3.
+FYPCollabor8 is a centralized Final Year Project (FYP) management system built specifically for Diploma students and academic staff at **Universiti Kuala Lumpur MIIT**. The system supports submission, progress monitoring, evaluation, meeting scheduling, and communication between students, supervisors, assessors, and coordinators.
 
-## Preview
+---
 
-[![SB Admin 2 Preview](https://assets.startbootstrap.com/img/screenshots/themes/sb-admin-2.png)](https://startbootstrap.github.io/startbootstrap-sb-admin-2/)
+## 📌 Features
 
-**[Launch Live Preview](https://startbootstrap.github.io/startbootstrap-sb-admin-2/)**
+- 🔐 Role-based User Authentication (Student, Supervisor, Assessor, Coordinator, Admin)
+- 📁 Online Submission of Proposal, Report & Presentation
+- 📊 Progress Diary for Students
+- 📅 Supervisor Meeting Booking & Approval Workflow
+- 🧑‍🏫 Peer Evaluation for Group Projects
+- 📬 Real-time Notifications System
+- 🧮 Rubric Preview & Evaluation Forms
+- 🧾 Coordinator Dashboard for Semester & Assessment Setup
+- 📚 Centralized Access to Teaching Materials
+- 🔍 (Prototype) Plagiarism Detection Feature
 
-## Status
+---
 
-[![GitHub license](https://img.shields.io/badge/license-MIT-blue.svg)](https://raw.githubusercontent.com/StartBootstrap/startbootstrap-sb-admin-2/master/LICENSE)
-[![npm version](https://img.shields.io/npm/v/startbootstrap-sb-admin-2.svg)](https://www.npmjs.com/package/startbootstrap-sb-admin-2)
-[![Build Status](https://travis-ci.org/StartBootstrap/startbootstrap-sb-admin-2.svg?branch=master)](https://travis-ci.org/StartBootstrap/startbootstrap-sb-admin-2)
-[![dependencies Status](https://david-dm.org/StartBootstrap/startbootstrap-sb-admin-2/status.svg)](https://david-dm.org/StartBootstrap/startbootstrap-sb-admin-2)
-[![devDependencies Status](https://david-dm.org/StartBootstrap/startbootstrap-sb-admin-2/dev-status.svg)](https://david-dm.org/StartBootstrap/startbootstrap-sb-admin-2?type=dev)
+## 💡 Project Overview & Technologies
 
-## Download and Installation
+This project was developed as part of the **Bachelor of Information Technology (Hons.) in Software Engineering** program. It aims to solve the problem of disorganized FYP workflows by replacing email-based processes with a centralized system.
 
-To begin using this template, choose one of the following options to get started:
+**Development Approach**:  
+- 📐 Methodology: Rapid Application Development (RAD)  
+- 🧱 Architecture: Modular PHP-based MVC-like structure  
+- 💻 Frontend: HTML, CSS, JavaScript (Bootstrap 4), jQuery  
+- 🔗 Backend: PHP  
+- 🗃️ Database: MySQL  
 
-* [Download the latest release on Start Bootstrap](https://startbootstrap.com/theme/sb-admin-2/)
-* Install via npm: `npm i startbootstrap-sb-admin-2`
-* Clone the repo: `git clone https://github.com/StartBootstrap/startbootstrap-sb-admin-2.git`
-* [Fork, Clone, or Download on GitHub](https://github.com/StartBootstrap/startbootstrap-sb-admin-2)
+---
 
-## Usage
+## 📸 Preview
 
-After installation, run `npm install` and then run `npm start` which will open up a preview of the template in your default browser, watch for changes to core template files, and live reload the browser when changes are saved. You can view the `gulpfile.js` to see which tasks are included with the dev environment.
+> Insert screenshots here (e.g. student dashboard, assessor evaluation page, meeting booking form)
 
-### Gulp Tasks
+---
 
-* `gulp` the default task that builds everything
-* `gulp watch` browserSync opens the project in your default browser and live reloads when changes are made
-* `gulp css` compiles SCSS files into CSS and minifies the compiled CSS
-* `gulp js` minifies the themes JS file
-* `gulp vendor` copies dependencies from node_modules to the vendor directory
+## 🧪 Tested Functional Modules
 
-You must have npm installed globally in order to use this build environment. This theme was built using node v11.6.0 and the Gulp CLI v2.0.1. If Gulp is not running properly after running `npm install`, you may need to update node and/or the Gulp CLI locally.
+- Student group registration, title proposal, and deliverable uploads
+- Supervisor dashboard for title approval, student evaluation, and meeting management
+- Assessor evaluation module and submission review
+- Coordinator dashboard for assigning lecturers, rubrics, and marking overview
+- Admin access for system-wide user management
 
-## Bugs and Issues
+---
 
-Have a bug or an issue with this template? [Open a new issue](https://github.com/StartBootstrap/startbootstrap-sb-admin-2/issues) here on GitHub or leave a comment on the [template overview page at Start Bootstrap](https://startbootstrap.com/theme/sb-admin-2/).
+## 📄 License
 
-## About
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for more info.
 
-Start Bootstrap is an open source library of free Bootstrap templates and themes. All of the free templates and themes on Start Bootstrap are released under the MIT license, which means you can use them for any purpose, even for commercial projects.
+---
 
-* <https://startbootstrap.com>
-* <https://twitter.com/SBootstrap>
+## 🙏 Acknowledgments
 
-Start Bootstrap was created by and is maintained by **[David Miller](https://davidmiller.io/)**.
+- Project Supervisor: **Dr. Norhaidah Abu Haris**  
+- Project Assessor: **Ts. Nor Azlina Ali**  
+- University: **Universiti Kuala Lumpur Malaysian Institute of Information Technology (UniKL MIIT)**  
+- Base UI Template: [SB Admin 2](https://startbootstrap.com/theme/sb-admin-2)
 
-* <https://davidmiller.io>
-* <https://twitter.com/davidmillerhere>
-* <https://github.com/davidtmiller>
+---
 
-Start Bootstrap is based on the [Bootstrap](https://getbootstrap.com/) framework created by [Mark Otto](https://twitter.com/mdo) and [Jacob Thorton](https://twitter.com/fat).
+## 👨‍💻 Author
 
-## Copyright and License
-
-Copyright 2013-2021 Start Bootstrap LLC. Code released under the [MIT](https://github.com/StartBootstrap/startbootstrap-resume/blob/master/LICENSE) license.
+**Mohamad Imran bin Mohamad Jiwa**  
+📧 Email: mimran.jiwa@s.unikl.edu.my  
+🔗 LinkedIn: [@mohamadimranjiwa](https://www.linkedin.com/in/mohamadimranjiwa/)
