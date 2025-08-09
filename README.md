@@ -12,15 +12,15 @@ FYPCollabor8 is a centralized Final Year Project (FYP) management system built s
 ## 📌 Features
 
 - 🔐 Role-based User Authentication (Student, Supervisor, Assessor, Coordinator, Admin)
-- 📁 Online Submission of Proposal, Report & Presentation
+- 📁 Online Submission of Assessments
 - 📊 Progress Diary for Students
+- 🧑‍🏫 Form groups with up to four members
 - 📅 Supervisor Meeting Booking & Approval Workflow
-- 🧑‍🏫 Peer Evaluation for Group Projects
-- 📬 Real-time Notifications System
 - 🧮 Rubric Preview & Evaluation Forms
 - 🧾 Coordinator Dashboard for Semester & Assessment Setup
+- 📬 Manage Users Detail
+- 🔍 View and Download Student Marks
 - 📚 Centralized Access to Teaching Materials
-- 🔍 (Prototype) Plagiarism Detection Feature
 
 ---
 
@@ -39,7 +39,21 @@ This project was developed as part of the **Bachelor of Information Technology (
 
 ## 📸 Preview
 
-> Insert screenshots here (e.g. student dashboard, assessor evaluation page, meeting booking form)
+**Student Change Project Detail** – Allows students to edit their project title and description after the selected supervisor accepts the proposal, providing flexibility to refine project information before progressing in the Final Year Project process.  
+
+![Student Change Project Detail](https://github.com/user-attachments/assets/d809e8d6-cd71-419b-b884-d20e93472eaa)
+
+**Lecturer Manage Meetings** – Enables supervisors to view and manage scheduled meetings with students. The interface displays a calendar view alongside a detailed table showing student names, meeting dates, times, topics, and statuses, with clear indications when no meetings are scheduled.  
+
+![Lecturer Manage Meetings](https://github.com/user-attachments/assets/8c51d067-bffc-4a70-98ea-52756b705799)
+
+**Coordinator View Student Marks** – Provides coordinators with an interface under "View Student Details" to review student performance in a filterable table. The table lists student names, IDs, and marks for deliverables such as the Final Report and Research Paper, displaying scores from supervisors, assessors, and calculated averages. Filters are available for semester, student, group, or deliverable type.  
+
+![Coordinator View Student Marks](https://github.com/user-attachments/assets/64158ca8-9b50-4382-9a21-7932de77e63c)
+
+**Admin Manage Students** – Enables administrators to oversee all registered students in the system. The interface displays names, usernames, emails, intake years, and intake months, with options to add, edit, delete, or bulk upload student details using a CSV file.  
+
+![Admin Manage Students](https://github.com/user-attachments/assets/8bc1778f-76a5-45c7-a8c6-7a1669116356)
 
 ---
 
@@ -71,5 +85,5 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 ## 👨‍💻 Author
 
 **Mohamad Imran bin Mohamad Jiwa**  
-📧 Email: mimran.jiwa@s.unikl.edu.my  
+📧 Email: mohamadimran2003@gmail.com  
 🔗 LinkedIn: [@mohamadimranjiwa](https://www.linkedin.com/in/mohamadimranjiwa/)
