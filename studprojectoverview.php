@@ -110,7 +110,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['project_title']) && !
             if (!$stmt) {
                 die("Prepare failed (group insert): " . $conn->error);
             }
-            $stmt->bind_param("sisis", $groupName, $lecturer, $coordinatorId, $status, $loggedInStudentId);
+            // Bind types: name (s), lecturer_id (i), coordinator_id (i), status (s), leader_id (i)
+            $stmt->bind_param("siisi", $groupName, $lecturer, $coordinatorId, $status, $loggedInStudentId);
             if ($stmt->execute()) {
                 $groupId = $stmt->insert_id;
 

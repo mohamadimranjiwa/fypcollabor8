@@ -15,7 +15,7 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
 
     if ($action === 'approve_group' || $action === 'reject_group') {
         $groupId = intval($_GET['id']);
-        $checkQuery = "SELECT id FROM groups WHERE id = ? AND lecturer_id = ? AND status = 'Pending'";
+        $checkQuery = "SELECT id FROM groups WHERE id = ? AND lecturer_id = ? AND (status = 'Pending' OR status = '' OR status IS NULL)";
         $stmt = $conn->prepare($checkQuery);
         if (!$stmt) {
             header("Location: lecttitleproposal.php?error=Prepare failed: " . $conn->error);
@@ -103,9 +103,9 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
         $message = ($action === 'approve_initial') ? "Initial title approved successfully" : "Initial title rejected successfully";
     } elseif ($action === 'approve_change' || $action === 'reject_change') {
         $projectId = intval($_GET['id']);
-        $checkQuery = "SELECT p.project_id FROM projects p JOIN groups g ON p.group_id = g.id WHERE p.project_id = ? AND g.status = 'Approved'";
+        $checkQuery = "SELECT p.project_id FROM projects p JOIN groups g ON p.group_id = g.id WHERE p.project_id = ? AND g.lecturer_id = ? AND g.status = 'Approved'";
         $stmt = $conn->prepare($checkQuery);
-        $stmt->bind_param("i", $projectId);
+        $stmt->bind_param("ii", $projectId, $lecturerID);
         $stmt->execute();
         $result = $stmt->get_result();
 
@@ -165,10 +165,10 @@ $isAssessor = in_array($roleID, [2, 3]);
 // Total Requests (Groups + Projects)
 $totalRequestsQuery = "
     SELECT (
-        SELECT COUNT(*) FROM groups WHERE lecturer_id = ? AND status = 'Pending'
+        SELECT COUNT(*) FROM groups WHERE lecturer_id = ? AND (status = 'Pending' OR status = '' OR status IS NULL)
     ) + (
         SELECT COUNT(*) FROM projects p JOIN groups g ON p.group_id = g.id 
-        WHERE g.lecturer_id = ? AND p.description = 'Description not provided yet.' AND g.status = 'Approved'
+        WHERE g.lecturer_id = ? AND g.status = 'Approved' AND (p.description IS NULL OR p.description NOT IN ('Title approved by lecturer','Title rejected by lecturer'))
     ) + (
         SELECT COUNT(*) FROM projects p JOIN groups g ON p.group_id = g.id 
         WHERE g.lecturer_id = ? AND p.pending_title IS NOT NULL AND g.status = 'Approved'
@@ -181,7 +181,7 @@ $totalRequests = $totalRequestsResult->fetch_assoc()['total_requests'];
 $stmt->close();
 
 // Pending Group Creation Requests
-$pendingGroupsQuery = "SELECT COUNT(*) AS pending_groups FROM groups WHERE lecturer_id = ? AND status = 'Pending'";
+$pendingGroupsQuery = "SELECT COUNT(*) AS pending_groups FROM groups WHERE lecturer_id = ? AND (status = 'Pending' OR status = '' OR status IS NULL)";
 $stmt = $conn->prepare($pendingGroupsQuery);
 $stmt->bind_param("i", $lecturerID);
 $stmt->execute();
@@ -193,7 +193,7 @@ $stmt->close();
 $pendingTitlesQuery = "
     SELECT COUNT(*) AS pending_titles 
     FROM projects p JOIN groups g ON p.group_id = g.id 
-    WHERE g.lecturer_id = ? AND p.description = 'Description not provided yet.' AND g.status = 'Approved'";
+    WHERE g.lecturer_id = ? AND g.status = 'Approved' AND (p.description IS NULL OR p.description NOT IN ('Title approved by lecturer','Title rejected by lecturer'))";
 $stmt = $conn->prepare($pendingTitlesQuery);
 $stmt->bind_param("i", $lecturerID);
 $stmt->execute();
@@ -221,7 +221,7 @@ $completedRequestsQuery = "
         SELECT COUNT(*) FROM groups WHERE lecturer_id = ? AND status = 'Approved'
     ) + (
         SELECT COUNT(*) FROM projects p JOIN groups g ON p.group_id = g.id 
-        WHERE g.lecturer_id = ? AND p.description != 'Description not provided yet.' AND g.status = 'Approved'
+        WHERE g.lecturer_id = ? AND g.status = 'Approved' AND p.description IN ('Title approved by lecturer','Title rejected by lecturer')
     ) AS completed_requests";
 $stmt = $conn->prepare($completedRequestsQuery);
 $stmt->bind_param("ii", $lecturerID, $lecturerID);
@@ -284,8 +284,8 @@ error_log("Filters applied: username='$searchUsername', group_name='$selectedGro
 $groupRequestsQuery = "
     SELECT g.id AS group_id, g.name AS group_name, p.title AS proposed_title, 
            p.description AS proposed_description, 'Group Creation' AS request_type 
-    FROM groups g JOIN projects p ON g.id = p.group_id 
-    WHERE g.lecturer_id = ? AND g.status = 'Pending'";
+    FROM groups g LEFT JOIN projects p ON g.id = p.group_id 
+    WHERE g.lecturer_id = ? AND (g.status = 'Pending' OR g.status = '' OR g.status IS NULL)";
 $stmt = $conn->prepare($groupRequestsQuery);
 $stmt->bind_param("i", $lecturerID);
 $stmt->execute();
@@ -298,7 +298,8 @@ $titleRequestsQuery = "
     SELECT g.name AS group_name, p.title AS proposed_title, p.project_id AS proposal_id, 
            'Initial Title' AS request_type 
     FROM projects p JOIN groups g ON p.group_id = g.id 
-    WHERE g.lecturer_id = ? AND p.description = 'Description not provided yet.' AND g.status = 'Approved'";
+    WHERE g.lecturer_id = ? AND g.status = 'Approved' 
+      AND (p.description IS NULL OR p.description NOT IN ('Title approved by lecturer','Title rejected by lecturer'))";
 $stmt = $conn->prepare($titleRequestsQuery);
 $stmt->bind_param("i", $lecturerID);
 $stmt->execute();
@@ -314,9 +315,17 @@ $changeTitleRequestsQuery = "
     SELECT g.name AS group_name, p.pending_title AS proposed_title, p.pending_description AS proposed_description, 
            p.project_id AS change_id 
     FROM projects p JOIN groups g ON p.group_id = g.id 
-    WHERE p.pending_title IS NOT NULL AND p.pending_description IS NOT NULL AND (g.status = 'Approved' OR g.status = 'Pending')";
-$changeTitleRequestsResult = $conn->query($changeTitleRequestsQuery);
-$changeTitleRequests = $changeTitleRequestsResult ? $changeTitleRequestsResult->fetch_all(MYSQLI_ASSOC) : [];
+    WHERE g.lecturer_id = ? AND p.pending_title IS NOT NULL AND p.pending_description IS NOT NULL AND g.status = 'Approved'";
+$stmt = $conn->prepare($changeTitleRequestsQuery);
+if ($stmt) {
+    $stmt->bind_param("i", $lecturerID);
+    $stmt->execute();
+    $changeTitleRequestsResult = $stmt->get_result();
+    $changeTitleRequests = $changeTitleRequestsResult ? $changeTitleRequestsResult->fetch_all(MYSQLI_ASSOC) : [];
+    $stmt->close();
+} else {
+    $changeTitleRequests = [];
+}
 
 // Student Details (only approved groups) with filters
 $studentDetailsQuery = "
