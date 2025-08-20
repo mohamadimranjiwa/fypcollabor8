@@ -96,11 +96,17 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
             exit();
         }
 
-        $newDescription = ($action === 'approve_initial') ? 'Title approved by lecturer' : 'Title rejected by lecturer';
-        $updateQuery = "UPDATE projects SET description = ? WHERE project_id = ?";
-        $stmt = $conn->prepare($updateQuery);
-        $stmt->bind_param("si", $newDescription, $projectId);
-        $message = ($action === 'approve_initial') ? "Initial title approved successfully" : "Initial title rejected successfully";
+        if ($action === 'approve_initial') {
+            $updateQuery = "UPDATE projects SET lecturer_id = ? WHERE project_id = ?";
+            $stmt = $conn->prepare($updateQuery);
+            $stmt->bind_param("ii", $lecturerID, $projectId);
+            $message = "Initial title approved successfully";
+        } else { // reject_initial
+            $updateQuery = "UPDATE projects SET lecturer_id = NULL WHERE project_id = ?";
+            $stmt = $conn->prepare($updateQuery);
+            $stmt->bind_param("i", $projectId);
+            $message = "Initial title rejected successfully";
+        }
     } elseif ($action === 'approve_change' || $action === 'reject_change') {
         $projectId = intval($_GET['id']);
         $checkQuery = "SELECT p.project_id FROM projects p JOIN groups g ON p.group_id = g.id WHERE p.project_id = ? AND g.lecturer_id = ? AND g.status = 'Approved'";
@@ -168,7 +174,8 @@ $totalRequestsQuery = "
         SELECT COUNT(*) FROM groups WHERE lecturer_id = ? AND (status = 'Pending' OR status = '' OR status IS NULL)
     ) + (
         SELECT COUNT(*) FROM projects p JOIN groups g ON p.group_id = g.id 
-        WHERE g.lecturer_id = ? AND g.status = 'Approved' AND (p.description IS NULL OR p.description NOT IN ('Title approved by lecturer','Title rejected by lecturer'))
+        WHERE g.lecturer_id = ? AND p.description = 'Description not provided yet.' AND g.status = 'Approved' 
+          AND p.pending_title IS NULL AND p.pending_description IS NULL
     ) + (
         SELECT COUNT(*) FROM projects p JOIN groups g ON p.group_id = g.id 
         WHERE g.lecturer_id = ? AND p.pending_title IS NOT NULL AND g.status = 'Approved'
@@ -193,7 +200,8 @@ $stmt->close();
 $pendingTitlesQuery = "
     SELECT COUNT(*) AS pending_titles 
     FROM projects p JOIN groups g ON p.group_id = g.id 
-    WHERE g.lecturer_id = ? AND g.status = 'Approved' AND (p.description IS NULL OR p.description NOT IN ('Title approved by lecturer','Title rejected by lecturer'))";
+    WHERE g.lecturer_id = ? AND p.description = 'Description not provided yet.' AND g.status = 'Approved' 
+      AND p.pending_title IS NULL AND p.pending_description IS NULL";
 $stmt = $conn->prepare($pendingTitlesQuery);
 $stmt->bind_param("i", $lecturerID);
 $stmt->execute();
@@ -298,8 +306,8 @@ $titleRequestsQuery = "
     SELECT g.name AS group_name, p.title AS proposed_title, p.project_id AS proposal_id, 
            'Initial Title' AS request_type 
     FROM projects p JOIN groups g ON p.group_id = g.id 
-    WHERE g.lecturer_id = ? AND g.status = 'Approved' 
-      AND (p.description IS NULL OR p.description NOT IN ('Title approved by lecturer','Title rejected by lecturer'))";
+    WHERE g.lecturer_id = ? AND p.description = 'Description not provided yet.' AND g.status = 'Approved' 
+      AND p.pending_title IS NULL AND p.pending_description IS NULL";
 $stmt = $conn->prepare($titleRequestsQuery);
 $stmt->bind_param("i", $lecturerID);
 $stmt->execute();
@@ -673,7 +681,7 @@ $current_page = basename($_SERVER['PHP_SELF']);
                                                 <th>Type</th>
                                                 <th>Group Name</th>
                                                 <th>Proposed Title</th>
-                                                <th>Services</th>
+                                                <th>Proposed Description</th>
                                                 <th>Action</th>
                                             </tr>
                                         </thead>

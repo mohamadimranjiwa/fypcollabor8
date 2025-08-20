@@ -228,7 +228,6 @@ $studentDetailsQuery = "
         s.full_name,
         s.email,
         s.username,
-        s.no_ic,
         s.no_tel,
         s.intake_year,
         s.intake_month,
@@ -728,7 +727,6 @@ $conn->close();
                                             <th>Full Name</th>
                                             <th>Email</th>
                                             <th>Username</th>
-                                            <th>IC Number</th>
                                             <th>Phone Number</th>
                                             <th>Intake Year</th>
                                             <th>Intake Month</th>
@@ -772,7 +770,6 @@ $conn->close();
                                                     </td>
                                                     <td><?php echo htmlspecialchars($detail['email']); ?></td>
                                                     <td><?php echo htmlspecialchars($detail['username']); ?></td>
-                                                    <td><?php echo htmlspecialchars($detail['no_ic'] ?? 'N/A'); ?></td>
                                                     <td><?php echo htmlspecialchars($detail['no_tel'] ?? 'N/A'); ?></td>
                                                     <td><?php echo htmlspecialchars($detail['intake_year']); ?></td>
                                                     <td><?php echo htmlspecialchars($detail['intake_month']); ?></td>
@@ -784,7 +781,7 @@ $conn->close();
                                             <?php endforeach; ?>
                                         <?php else: ?>
                                             <tr>
-                                                <td colspan="11" class="text-center">No students found.</td>
+                                                <td colspan="10" class="text-center">No students found.</td>
                                             </tr>
                                         <?php endif; ?>
                                     </tbody>
