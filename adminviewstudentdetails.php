@@ -560,11 +560,6 @@ $conn->close();
                     <i class="fas fa-fw fa-user"></i>
                     <span>View Student Details</span></a>
             </li>
-            <li class="nav-item">
-                <a class="nav-link" href="adminmanageannouncement.php">
-                    <i class="fas fa-fw fa-bullhorn"></i>
-                    <span>Manage Announcement</span></a>
-            </li>
             <hr class="sidebar-divider d-none d-md-block">
             <div class="text-center d-none d-md-inline">
                 <button class="rounded-circle border-0" id="sidebarToggle"></button>
