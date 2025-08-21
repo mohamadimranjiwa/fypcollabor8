@@ -249,7 +249,7 @@ $studentDetailsQuery = "
 if (!empty($studentDetailsConditions)) {
     $studentDetailsQuery .= " WHERE " . implode(" AND ", $studentDetailsConditions);
 }
-$studentDetailsQuery .= " GROUP BY s.id, s.full_name, s.email, s.username, s.no_ic, s.no_tel, s.intake_year, s.intake_month, g.id, g.name, ls.full_name, la.full_name
+$studentDetailsQuery .= " GROUP BY s.id, s.full_name, s.email, s.username, s.no_tel, s.intake_year, s.intake_month, g.id, g.name, ls.full_name, la.full_name
     ORDER BY s.full_name";
 $stmt = $conn->prepare($studentDetailsQuery);
 if ($stmt === false) {
