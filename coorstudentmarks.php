@@ -701,9 +701,6 @@ $conn->close();
     <script src="vendor/datatables/jquery.dataTables.min.js"></script>
     <script src="vendor/datatables/dataTables.bootstrap4.min.js"></script>
     <script>
-        $(document).ready(function() {
-            // DataTables initialization is commented out to avoid interference with fixed columns
-        });
     </script>
 </body>
 </html>
