@@ -23,8 +23,8 @@ $colorPalette = [
 // Fetch group colors
 $groupColors = [];
 $defaultColor = '#6c757d';
-$stmt = $conn->prepare("SELECT id FROM groups WHERE lecturer_id = ?");
-$stmt->bind_param("i", $lecturerID);
+$stmt = $conn->prepare("SELECT id FROM groups WHERE lecturer_id = ? OR assessor_id = ?");
+$stmt->bind_param("ii", $lecturerID, $lecturerID);
 $stmt->execute();
 $result = $stmt->get_result();
 while ($row = $result->fetch_assoc()) {
@@ -64,7 +64,7 @@ if (isset($_POST['action']) && $_POST['action'] == 'get_student_details') {
     }
     $stmt->close();
     $stmt = $conn->prepare("
-        SELECT g.id, g.name, p.title
+        SELECT g.id, g.name, p.title, p.description
         FROM group_members gm
         JOIN groups g ON gm.group_id = g.id
         LEFT JOIN projects p ON g.id = p.group_id
@@ -129,23 +129,30 @@ $roleID = $lecturer['role_id'] ?? 1;
 $isSupervisor = in_array($roleID, [3, 4]);
 $isAssessor = in_array($roleID, [2, 3]);
 
-// Fetch total students (supervised or assessed)
+// Fetch current semester
+$currentSemesterQuery = "SELECT semester_name, start_date FROM semesters WHERE is_current = 1 LIMIT 1";
+$currentSemesterResult = $conn->query($currentSemesterQuery) or die("Error in current semester query: " . $conn->error);
+$currentSemester = $currentSemesterResult->fetch_assoc();
+$currentSemesterName = $currentSemester ? $currentSemester['semester_name'] : null;
+$semesterYear = $currentSemester ? date('Y', strtotime($currentSemester['start_date'])) : null;
+$semesterMonth = $currentSemester ? date('F', strtotime($currentSemester['start_date'])) : null;
+
+// Fetch total students (from supervised or assessed groups in the current semester)
 $totalStudents = 0;
 if ($isSupervisor || $isAssessor) {
-    $sql = "SELECT COUNT(DISTINCT s.student_id) as count 
-            FROM (
-                SELECT student_id FROM group_members gm 
-                JOIN groups g ON gm.group_id = g.id 
-                WHERE g.lecturer_id = ? AND ? = 1
-                UNION
-                SELECT student_id FROM evaluation e 
-                WHERE e.assessor_id = ? AND ? = 1
-            ) s";
+    $sql = "SELECT COUNT(DISTINCT gm.student_id) as count 
+            FROM group_members gm 
+            JOIN groups g ON gm.group_id = g.id 
+            JOIN students s ON gm.student_id = s.id
+            WHERE ((g.lecturer_id = ? AND ? = 1) OR (g.assessor_id = ? AND ? = 1))
+            AND g.status = 'Approved'
+            AND s.intake_year = ?
+            AND s.intake_month = ?";
     $stmt = $conn->prepare($sql);
     if ($stmt === false) {
         die("Prepare failed (total students): " . $conn->error);
     }
-    $stmt->bind_param("iiii", $lecturerID, $isSupervisor, $lecturerID, $isAssessor);
+    $stmt->bind_param("iiiiss", $lecturerID, $isSupervisor, $lecturerID, $isAssessor, $semesterYear, $semesterMonth);
     $stmt->execute();
     $result = $stmt->get_result();
     if ($row = $result->fetch_assoc()) {
@@ -199,19 +206,22 @@ if ($isSupervisor || $isAssessor) {
     $stmt->close();
 }
 
-// Fetch total deliverable submissions (for supervised students)
+// Fetch total deliverable submissions (for supervised or assessed students)
 $deliverableSubmissions = 0;
-if ($isSupervisor) {
+if ($isSupervisor || $isAssessor) {
     $sql = "SELECT COUNT(*) as count 
             FROM deliverable_submissions ds 
             JOIN group_members gm ON ds.student_id = gm.student_id 
             JOIN groups g ON gm.group_id = g.id 
-            WHERE g.lecturer_id = ?";
+            JOIN students s ON gm.student_id = s.id
+            WHERE ((g.lecturer_id = ? AND ? = 1) OR (g.assessor_id = ? AND ? = 1))
+            AND s.intake_year = ?
+            AND s.intake_month = ?";
     $stmt = $conn->prepare($sql);
     if ($stmt === false) {
         die("Prepare failed for deliverable submissions: " . $conn->error);
     }
-    $stmt->bind_param("i", $lecturerID);
+    $stmt->bind_param("iiiiss", $lecturerID, $isSupervisor, $lecturerID, $isAssessor, $semesterYear, $semesterMonth);
     $stmt->execute();
     $result = $stmt->get_result();
     if ($row = $result->fetch_assoc()) {
@@ -226,13 +236,16 @@ if ($isSupervisor) {
     $sql = "SELECT COUNT(*) as count 
             FROM projects p 
             JOIN groups g ON p.group_id = g.id 
+            JOIN students s ON g.leader_id = s.id
             WHERE g.lecturer_id = ? 
-            AND (p.pending_title IS NOT NULL OR p.pending_description IS NOT NULL)";
+            AND (p.pending_title IS NOT NULL OR p.pending_description IS NOT NULL)
+            AND s.intake_year = ?
+            AND s.intake_month = ?";
     $stmt = $conn->prepare($sql);
     if ($stmt === false) {
         die("Prepare failed (pending proposals): " . $conn->error);
     }
-    $stmt->bind_param("i", $lecturerID);
+    $stmt->bind_param("iis", $lecturerID, $semesterYear, $semesterMonth);
     $stmt->execute();
     $result = $stmt->get_result();
     if ($row = $result->fetch_assoc()) {
@@ -248,12 +261,15 @@ if ($isSupervisor) {
             FROM diary d 
             JOIN group_members gm ON d.student_id = gm.student_id 
             JOIN groups g ON gm.group_id = g.id 
-            WHERE g.lecturer_id = ?";
+            JOIN students s ON gm.student_id = s.id
+            WHERE g.lecturer_id = ?
+            AND s.intake_year = ?
+            AND s.intake_month = ?";
     $stmt = $conn->prepare($sql);
     if ($stmt === false) {
         die("Prepare failed (total diaries): " . $conn->error);
     }
-    $stmt->bind_param("i", $lecturerID);
+    $stmt->bind_param("iis", $lecturerID, $semesterYear, $semesterMonth);
     $stmt->execute();
     $result = $stmt->get_result();
     if ($row = $result->fetch_assoc()) {
@@ -265,27 +281,29 @@ if ($isSupervisor) {
 // Fetch evaluation progress (for assessors or supervisors)
 $evaluationProgress = 0;
 if ($isSupervisor || $isAssessor) {
-    $sql = "SELECT (COUNT(e.id) / GREATEST(1, COUNT(DISTINCT s.student_id))) * 100 as eval_progress 
-            FROM (
-                SELECT gm.student_id 
-                FROM group_members gm 
-                JOIN groups g ON gm.group_id = g.id 
-                WHERE g.lecturer_id = ? AND ? = 1
-                UNION
-                SELECT e2.student_id 
-                FROM evaluation e2 
-                WHERE e2.assessor_id = ? AND ? = 1
-            ) AS s 
-            LEFT JOIN evaluation e ON s.student_id = e.student_id";
+    $sql = "SELECT 
+                (COUNT(DISTINCT CASE 
+                    WHEN ((? = 1 AND e.assessor_id = ?) OR (? = 1 AND e.supervisor_id = ?)) 
+                    THEN e.student_id 
+                    END) / 
+                GREATEST(1, COUNT(DISTINCT gm.student_id))) * 100 as eval_progress 
+            FROM group_members gm 
+            JOIN groups g ON gm.group_id = g.id 
+            JOIN students s ON gm.student_id = s.id
+            LEFT JOIN evaluation e ON gm.student_id = e.student_id
+            WHERE ((g.lecturer_id = ? AND ? = 1) OR (g.assessor_id = ? AND ? = 1))
+            AND s.intake_year = ?
+            AND s.intake_month = ?";
     $stmt = $conn->prepare($sql);
     if ($stmt === false) {
         die("Prepare failed for evaluation progress: " . $conn->error);
     }
-    $stmt->bind_param("iiii", $lecturerID, $isSupervisor, $lecturerID, $isAssessor);
+    // Bind 10 parameters: isAssessor, lecturerID, isSupervisor, lecturerID, lecturerID, isSupervisor, lecturerID, isAssessor, semesterYear, semesterMonth
+    $stmt->bind_param("iiiiiiiiis", $isAssessor, $lecturerID, $isSupervisor, $lecturerID, $lecturerID, $isSupervisor, $lecturerID, $isAssessor, $semesterYear, $semesterMonth);
     $stmt->execute();
     $result = $stmt->get_result();
     if ($row = $result->fetch_assoc()) {
-        $evaluationProgress = round($row['eval_progress'] ?? 0);
+        $evaluationProgress = min(round($row['eval_progress'] ?? 0), 100); // Cap at 100%
     }
     $stmt->close();
 }
@@ -309,7 +327,8 @@ if ($isSupervisor || $isAssessor) {
             FROM meetings m 
             LEFT JOIN groups g ON m.group_id = g.id
             LEFT JOIN students s ON m.student_id = s.id
-            WHERE m.lecturer_id = ? AND m.status = 'Confirmed'";
+            WHERE m.lecturer_id = ? 
+            AND m.status = 'Confirmed'";
     $stmt = $conn->prepare($sql);
     if ($stmt === false) {
         die("Prepare failed (meetings): " . $conn->error);
@@ -323,31 +342,24 @@ if ($isSupervisor || $isAssessor) {
     $stmt->close();
 }
 
-// Fetch current semester
-$currentSemesterQuery = "SELECT semester_name, start_date FROM semesters WHERE is_current = 1 LIMIT 1";
-$currentSemesterResult = $conn->query($currentSemesterQuery) or die("Error in current semester query: " . $conn->error);
-$currentSemester = $currentSemesterResult->fetch_assoc();
-$currentSemesterName = $currentSemester ? $currentSemester['semester_name'] : null;
-
-// Fetch students for this lecturer (only from current semester)
+// Fetch students for this lecturer (only supervised/assessed, approved groups, current semester)
 $studentsQuery = "
-    SELECT DISTINCT s.full_name, s.username as id, s.intake_year, s.intake_month, gm.group_id
+    SELECT DISTINCT s.id AS student_id, s.username AS student_username, s.full_name AS student_name, 
+           s.intake_year, s.intake_month
     FROM students s
     JOIN group_members gm ON s.id = gm.student_id
     JOIN groups g ON gm.group_id = g.id
-    WHERE (
-        (g.lecturer_id = ? AND ? = 1) OR
-        (g.assessor_id = ? AND ? = 1)
-    )
-    AND s.intake_year = YEAR(?) 
-    AND s.intake_month = MONTHNAME(?)
+    WHERE ((g.lecturer_id = ? AND ? = 1) OR (g.assessor_id = ? AND ? = 1))
+    AND g.status = 'Approved'
+    AND s.intake_year = ?
+    AND s.intake_month = ?
     ORDER BY s.full_name";
 $stmt = $conn->prepare($studentsQuery);
 if (!$stmt) {
     error_log("Students Query preparation failed: " . $conn->error);
     die("Prepare failed (Students): " . $conn->error);
 }
-$stmt->bind_param("iiisss", $lecturerID, $isSupervisor, $lecturerID, $isAssessor, $currentSemester['start_date'], $currentSemester['start_date']);
+$stmt->bind_param("iiiiss", $lecturerID, $isSupervisor, $lecturerID, $isAssessor, $semesterYear, $semesterMonth);
 $stmt->execute();
 $studentsResult = $stmt->get_result();
 $students = $studentsResult->fetch_all(MYSQLI_ASSOC);
@@ -456,7 +468,6 @@ $conn->close();
                         <h6 class="collapse-header">Guidance Resources:</h6>
                         <a class="collapse-item <?= !$isSupervisor ? 'disabled' : '' ?>" href="lectmanagemeetings.php">Manage Meetings</a>
                         <a class="collapse-item <?= !$isSupervisor ? 'disabled' : '' ?>" href="lectviewdiary.php">View Student Diary</a>
-                        <?php /* <a class="collapse-item <?= !$isSupervisor ? 'disabled' : '' ?>" href="lectevaluatestudent.php">Evaluate Students</a> */ ?>
                         <a class="collapse-item <?= !$isSupervisor ? 'disabled' : '' ?>" href="lectviewstudentdetails.php">View Student Details</a>
                     </div>
                 </div>
@@ -473,7 +484,6 @@ $conn->close();
                 <div id="collapsePages" class="collapse" aria-labelledby="headingPages" data-parent="#accordionSidebar">
                     <div class="bg-white py-2 collapse-inner rounded">
                         <h6 class="collapse-header">Performance Review:</h6>
-                        <?php /* <a class="collapse-item <?= !$isAssessor ? 'disabled' : '' ?>" href="assevaluatestudent.php">Evaluate Students</a> */ ?>
                         <a class="collapse-item <?= !$isAssessor ? 'disabled' : '' ?>" href="assviewstudentdetails.php">View Student Details</a>
                         <div class="collapse-divider"></div>
                         <h6 class="collapse-header">Component Analysis:</h6>
@@ -508,7 +518,6 @@ $conn->close();
                                     <i class="fas fa-user fa-sm fa-fw mr-2 text-gray-400"></i>
                                     Profile
                                 </a>
-                                <!-- Settings -->
                                 <div class="dropdown-divider"></div>
                                 <a class="dropdown-item" href="#" data-toggle="modal" data-target="#logoutModal">
                                     <i class="fas fa-sign-out-alt fa-sm fa-fw mr-2 text-gray-400"></i>
@@ -533,7 +542,7 @@ $conn->close();
                     <div class="row">
                         <!-- View Student Detail -->
                         <div class="col-lg-4 col-md-6 mb-4">
-                            <a href="lectviewstudentdetails.php" style="text-decoration: none; color: inherit;">
+                            <a href="<?= $isSupervisor ? 'lectviewstudentdetails.php' : 'assviewstudentdetails.php' ?>" style="text-decoration: none; color: inherit;">
                                 <div class="card border-left-primary shadow h-100 py-2">
                                     <div class="card-body">
                                         <div class="row no-gutters align-items-center">
@@ -595,8 +604,7 @@ $conn->close();
 
                         <!-- Evaluate Students -->
                         <div class="col-lg-4 col-md-6 mb-4">
-                            <?php /* <a href="<?= $isSupervisor ? 'lectevaluatestudent.php' : 'assevaluatestudent.php' ?>" style="text-decoration: none; color: inherit;"> */ ?>
-                            <a href="#" style="text-decoration: none; color: inherit;" onclick="alert('Evaluation is now done directly via FYP Components page.'); return false;">
+                            <a href="<?= $isSupervisor ? 'lectfypcomponents.php' : 'assfypcomponents.php' ?>" style="text-decoration: none; color: inherit;">
                                 <div class="card border-left-info shadow h-100 py-2">
                                     <div class="card-body">
                                         <div class="row no-gutters align-items-center">
@@ -745,35 +753,26 @@ $conn->close();
                                                     <th>Intake Month</th>
                                                 </tr>
                                             </thead>
-                                            <tfoot>
-                                                <tr>
-                                                    <th>Name</th>
-                                                    <th>Student ID</th>
-                                                    <th>Intake Year</th>
-                                                    <th>Intake Month</th>
-                                                </tr>
-                                            </tfoot>
                                             <tbody>
-                                                <?php if (empty($students)): ?>
-                                                    <tr><td colspan="4">No students assigned.</td></tr>
-                                                <?php else: ?>
-                                                    <?php foreach ($students as $student): ?>
+                                                <?php if (!empty($students)): ?>
+                                                    <?php foreach ($students as $row): ?>
                                                         <tr>
                                                             <td>
-                                                                <?= htmlspecialchars($student['full_name']) ?>
-                                                                <?php if (isset($student['group_id']) && $student['group_id'] > 0): ?>
-                                                                    <i class="fas fa-info-circle info-icon ml-2"
-                                                                       data-toggle="modal"
-                                                                       data-target="#groupModal"
-                                                                       data-student-id="<?= htmlspecialchars($student['id']) ?>"
-                                                                       data-group-id="<?= htmlspecialchars($student['group_id']) ?>"></i>
-                                                                <?php endif; ?>
+                                                                <?= htmlspecialchars($row['student_name']) ?>
+                                                                <i class="fas fa-info-circle info-icon"
+                                                                   data-toggle="modal"
+                                                                   data-target="#studentModal"
+                                                                   data-student-id="<?= $row['student_id'] ?>"></i>
                                                             </td>
-                                                            <td><?= htmlspecialchars($student['id']) ?></td>
-                                                            <td><?= htmlspecialchars($student['intake_year'] ?? 'N/A') ?></td>
-                                                            <td><?= htmlspecialchars($student['intake_month'] ?? 'N/A') ?></td>
+                                                            <td><?= htmlspecialchars($row['student_username']) ?></td>
+                                                            <td><?= htmlspecialchars($row['intake_year'] ?? 'N/A') ?></td>
+                                                            <td><?= htmlspecialchars($row['intake_month'] ?? 'N/A') ?></td>
                                                         </tr>
                                                     <?php endforeach; ?>
+                                                <?php else: ?>
+                                                    <tr>
+                                                        <td colspan="4" class="text-center">No student details available.</td>
+                                                    </tr>
                                                 <?php endif; ?>
                                             </tbody>
                                         </table>
@@ -784,17 +783,40 @@ $conn->close();
                     </div>
                     <?php endif; ?>
 
-                    <!-- Group Details Modal -->
-                    <div class="modal fade" id="groupModal" tabindex="-1" role="dialog" aria-labelledby="groupModalLabel" aria-hidden="true">
+                    <!-- Student Details Modal -->
+                    <div class="modal fade" id="studentModal" tabindex="-1" role="dialog" aria-labelledby="studentModalLabel" aria-hidden="true">
                         <div class="modal-dialog modal-lg" role="document">
                             <div class="modal-content">
                                 <div class="modal-header">
-                                    <h5 class="modal-title" id="groupModalLabel">Group Project Details</h5>
+                                    <h5 class="modal-title" id="studentModalLabel">Student Details</h5>
                                     <button class="close" type="button" data-dismiss="modal" aria-label="Close">
                                         <span aria-hidden="true">×</span>
                                     </button>
                                 </div>
                                 <div class="modal-body">
+                                    <h6>Student Information</h6>
+                                    <table class="table table-bordered">
+                                        <thead>
+                                            <tr>
+                                                <th>Field</th>
+                                                <th>Value</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr>
+                                                <td>Full Name</td>
+                                                <td id="modal-student-name"></td>
+                                            </tr>
+                                            <tr>
+                                                <td>Intake Year</td>
+                                                <td id="modal-intake-year"></td>
+                                            </tr>
+                                            <tr>
+                                                <td>Intake Month</td>
+                                                <td id="modal-intake-month"></td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
                                     <h6>Group Information</h6>
                                     <table class="table table-bordered">
                                         <thead>
@@ -816,34 +838,11 @@ $conn->close();
                                                 <td>Project Description</td>
                                                 <td id="modal-project-description"></td>
                                             </tr>
+                                            <tr>
+                                                <td>Group Members</td>
+                                                <td id="modal-group-members"></td>
+                                            </tr>
                                         </tbody>
-                                    </table>
-                                    <h6>Submissions</h6>
-                                    <table class="table table-bordered">
-                                        <thead>
-                                            <tr>
-                                                <th>Deliverable Name</th>
-                                                <th>Submitter</th>
-                                                <th>File</th>
-                                                <th>Submitted At</th>
-                                                <th>Type</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody id="modal-submissions"></tbody>
-                                    </table>
-                                    <h6>Marking Details</h6>
-                                    <table class="table table-bordered">
-                                        <thead>
-                                            <tr>
-                                                <th>Deliverable Name</th>
-                                                <th>Marker</th>
-                                                <th>Grade</th>
-                                                <th>Feedback</th>
-                                                <th>Rubric Details</th>
-                                                <th>Date</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody id="modal-evaluations"></tbody>
                                     </table>
                                 </div>
                                 <div class="modal-footer">
@@ -976,11 +975,8 @@ $conn->close();
                             <?php endforeach; ?>
                         ],
                         eventClick: function(info) {
-                            // Clear previous table content
                             const tableBody = document.getElementById('calendarEventTableBody');
                             tableBody.innerHTML = '';
-
-                            // Create table row
                             const row = document.createElement('tr');
                             row.innerHTML = `
                                 <td>${info.event.extendedProps.studentName}</td>
@@ -996,120 +992,50 @@ $conn->close();
                                 </td>
                             `;
                             tableBody.appendChild(row);
-
-                            // Show the modal
                             $('#calendarEventModal').modal('show');
                         }
                     });
                     calendar.render();
                 }
 
-                // Handle group details modal
                 $(document).ready(function() {
-                    console.log('Modal script initialized');
-
                     $('.info-icon').on('click', function() {
-                        console.log('Info icon clicked');
                         var studentId = $(this).data('student-id');
-                        var groupName = $(this).data('group-name');
-                        var projectTitle = $(this).data('project-title');
-                        var projectDescription = $(this).data('project-description');
-                        var submissions = $(this).data('submissions');
-                        var evaluations = $(this).data('evaluations');
+                        console.log('Lecturer Dashboard: Info icon clicked for student ID:', studentId);
 
-                        console.log('Student ID:', studentId);
-                        console.log('Group Name:', groupName);
-                        console.log('Submissions:', submissions);
-                        console.log('Evaluations:', evaluations);
-
-                        $('#modal-group-name').text(groupName || 'N/A');
-                        $('#modal-project-title').text(projectTitle || 'N/A');
-                        $('#modal-project-description').text(projectDescription || 'N/A');
-
-                        var submissionsTable = $('#modal-submissions');
-                        submissionsTable.empty();
-                        try {
-                            if (submissions && Array.isArray(submissions) && submissions.length > 0) {
-                                submissions.forEach(function(submission) {
-                                    if (submission.submission_type === 'group' || 
-                                        (submission.submission_type === 'individual' && submission.student_id == studentId)) {
-                                        var submittedAt = submission.submitted_at ? new Date(submission.submitted_at).toLocaleString() : 'Not Submitted';
-                                        var submitter = submission.submission_type === 'group' ? 
-                                            (submission.group_members && submission.group_members.length > 0 ? 
-                                                submission.group_members.join(', ') : 'Group Members N/A') : 
-                                            (submission.submitter_name || 'N/A');
-                                        var fileLink = submission.file_path ? 
-                                            `<a href="${submission.file_path}" target="_blank">${submission.file_path.split('/').pop()}</a>` : 
-                                            'No File';
-                                        var row = `
-                                            <tr>
-                                                <td>${submission.deliverable_name || 'N/A'}</td>
-                                                <td>${submitter}</td>
-                                                <td>${fileLink}</td>
-                                                <td>${submittedAt}</td>
-                                                <td>${submission.submission_type.charAt(0).toUpperCase() + submission.submission_type.slice(1)}</td>
-                                            </tr>
-                                        `;
-                                        submissionsTable.append(row);
-                                    }
-                                });
-                                if (submissionsTable.children().length === 0) {
-                                    submissionsTable.append('<tr><td colspan="5">No relevant submissions found.</td></tr>');
+                        $.ajax({
+                            url: window.location.href,
+                            type: 'POST',
+                            data: {
+                                action: 'get_student_details',
+                                student_id: studentId
+                            },
+                            dataType: 'json',
+                            success: function(response) {
+                                console.log('Lecturer Dashboard: AJAX response received:', response);
+                                
+                                if (response.error) {
+                                    console.error('Lecturer Dashboard: Error in response:', response.error);
+                                    alert('Error: ' + response.error);
+                                    return;
                                 }
-                            } else {
-                                console.log('No submissions data or invalid format');
-                                submissionsTable.append('<tr><td colspan="5">No submissions found.</td></tr>');
-                            }
-                        } catch (e) {
-                            console.error('Error processing submissions:', e);
-                            submissionsTable.append('<tr><td colspan="5">Error loading submissions.</td></tr>');
-                        }
 
-                        var evaluationsTable = $('#modal-evaluations');
-                        evaluationsTable.empty();
-                        try {
-                            if (evaluations && Array.isArray(evaluations) && evaluations.length > 0) {
-                                var hasEvaluations = false;
-                                evaluations.forEach(function(evaluation, index) {
-                                    console.log(`Processing evaluation ${index}:`, evaluation);
-                                    console.log(`Evaluation student_id: ${evaluation.student_id}, Modal studentId: ${studentId}`);
-                                    if (evaluation.student_id == studentId) {
-                                        hasEvaluations = true;
-                                        var evalDate = evaluation.date ? new Date(evaluation.date).toLocaleDateString() : 'N/A';
-                                        var grade = evaluation.evaluation_grade !== null && evaluation.evaluation_grade !== undefined ? 
-                                            parseFloat(evaluation.evaluation_grade).toFixed(2) : 'N/A';
-                                        var rubricDetails = evaluation.rubric_details ? 
-                                            evaluation.rubric_details.split('; ').join('<br>') : 'No rubric details';
-                                        var row = `
-                                            <tr>
-                                                <td>${evaluation.deliverable_name || 'N/A'}</td>
-                                                <td>${evaluation.marker_name || 'N/A'}</td>
-                                                <td>${grade}</td>
-                                                <td>${evaluation.feedback || 'No feedback provided'}</td>
-                                                <td>${rubricDetails}</td>
-                                                <td>${evalDate}</td>
-                                            </tr>
-                                        `;
-                                        evaluationsTable.append(row);
-                                        console.log(`Added evaluation row for student ID ${studentId}:`, evaluation);
-                                    } else {
-                                        console.log(`Skipping evaluation ${index}: student_id ${evaluation.student_id} does not match modal studentId ${studentId}`);
-                                    }
-                                });
-                                if (!hasEvaluations) {
-                                    evaluationsTable.append('<tr><td colspan="6">No evaluations found for this student.</td></tr>');
-                                    console.log('No evaluations matched student ID:', studentId);
-                                }
-                            } else {
-                                console.log('No evaluations data received or invalid format');
-                                evaluationsTable.append('<tr><td colspan="6">No evaluations found.</td></tr>');
-                            }
-                        } catch (e) {
-                            console.error('Error processing evaluations:', e);
-                            evaluationsTable.append('<tr><td colspan="6">Error loading evaluations.</td></tr>');
-                        }
+                                $('#modal-student-name').text(response.student?.full_name || 'N/A');
+                                $('#modal-intake-year').text(response.student?.intake_year || 'N/A');
+                                $('#modal-intake-month').text(response.student?.intake_month || 'N/A');
+                                $('#modal-group-name').text(response.group?.name || 'N/A');
+                                $('#modal-project-title').text(response.group?.title || 'N/A');
+                                $('#modal-project-description').text(response.group?.description || 'N/A');
+                                $('#modal-group-members').text(response.group_members?.length > 0 ? response.group_members.join(', ') : 'N/A');
 
-                        $('#groupModal').modal('show');
+                                $('#studentModal').modal('show');
+                            },
+                            error: function(xhr, status, error) {
+                                console.error('Lecturer Dashboard: AJAX error:', status, error);
+                                console.error('Lecturer Dashboard: Response text:', xhr.responseText);
+                                alert('Error fetching student details. Check console for details.');
+                            }
+                        });
                     });
                 });
             });
