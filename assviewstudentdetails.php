@@ -66,14 +66,11 @@ $selectedSemester = isset($_GET['semester']) && trim($_GET['semester']) !== '' ?
 $searchUsername = isset($_GET['username']) ? trim($_GET['username']) : '';
 $selectedGroup = isset($_GET['group_name']) ? trim($_GET['group_name']) : '';
 
-// Fetch groups for the filter (assessor-based and semester-based)
+// Fetch groups for the filter (role-based and semester-based)
 $groupsConditions = [];
-$groupsParams = [];
-$groupsParamTypes = "";
-
+$groupsParams = [$lecturerID];
+$groupsParamTypes = "i";
 $groupsConditions[] = "g.assessor_id = ?";
-$groupsParams[] = $lecturerID;
-$groupsParamTypes .= "i";
 $groupsConditions[] = "g.status = 'Approved'";
 
 if ($selectedSemester) {
@@ -105,14 +102,11 @@ $groupsResult = $stmt->get_result();
 $groups = $groupsResult->fetch_all(MYSQLI_ASSOC);
 $stmt->close();
 
-// Fetch total students (assessor-based filtering)
+// Fetch total students (role-based filtering)
 $totalStudentsConditions = [];
-$totalStudentsParams = [];
-$totalStudentsParamTypes = "";
-
+$totalStudentsParams = [$lecturerID];
+$totalStudentsParamTypes = "i";
 $totalStudentsConditions[] = "g.assessor_id = ?";
-$totalStudentsParams[] = $lecturerID;
-$totalStudentsParamTypes .= "i";
 $totalStudentsConditions[] = "g.status = 'Approved'";
 
 if ($selectedSemester) {
@@ -153,14 +147,11 @@ $totalStudentsResult = $stmt->get_result();
 $totalStudents = ($totalStudentsResult && $row = $totalStudentsResult->fetch_assoc()) ? $row['total_students'] : 0;
 $stmt->close();
 
-// Fetch total projects (assessor-based filtering)
+// Fetch total projects (role-based filtering)
 $totalProjectsConditions = [];
-$totalProjectsParams = [];
-$totalProjectsParamTypes = "";
-
+$totalProjectsParams = [$lecturerID];
+$totalProjectsParamTypes = "i";
 $totalProjectsConditions[] = "g.assessor_id = ?";
-$totalProjectsParams[] = $lecturerID;
-$totalProjectsParamTypes .= "i";
 $totalProjectsConditions[] = "g.status = 'Approved'";
 
 if ($selectedSemester) {
@@ -196,14 +187,11 @@ $totalProjectsResult = $stmt->get_result();
 $totalProjects = ($totalProjectsResult && $row = $totalProjectsResult->fetch_assoc()) ? $row['total_projects'] : 0;
 $stmt->close();
 
-// Fetch student details with group ID and total evaluation grades (including group evaluations)
+// Fetch student details with group ID, total evaluation grades, and leader status
 $studentDetailsConditions = [];
-$studentDetailsParams = [];
-$studentDetailsParamTypes = "";
-
+$studentDetailsParams = [$lecturerID];
+$studentDetailsParamTypes = "i";
 $studentDetailsConditions[] = "g.assessor_id = ?";
-$studentDetailsParams[] = $lecturerID;
-$studentDetailsParamTypes .= "i";
 $studentDetailsConditions[] = "g.status = 'Approved'";
 
 if ($selectedSemester) {
@@ -233,6 +221,7 @@ $studentDetailsQuery = "
         s.intake_month,
         g.id AS group_id,
         g.name AS group_name,
+        g.leader_id,
         ls.full_name AS supervisor_name,
         la.full_name AS assessor_name,
         (
@@ -249,7 +238,7 @@ $studentDetailsQuery = "
 if (!empty($studentDetailsConditions)) {
     $studentDetailsQuery .= " WHERE " . implode(" AND ", $studentDetailsConditions);
 }
-$studentDetailsQuery .= " GROUP BY s.id, s.full_name, s.email, s.username, s.no_tel, s.intake_year, s.intake_month, g.id, g.name, ls.full_name, la.full_name
+$studentDetailsQuery .= " GROUP BY s.id, s.full_name, s.email, s.username, s.no_tel, s.intake_year, s.intake_month, g.id, g.name, g.leader_id, ls.full_name, la.full_name
     ORDER BY s.full_name";
 $stmt = $conn->prepare($studentDetailsQuery);
 if ($stmt === false) {
@@ -263,7 +252,7 @@ $studentDetailsResult = $stmt->get_result();
 $studentDetails = $studentDetailsResult ? $studentDetailsResult->fetch_all(MYSQLI_ASSOC) : [];
 $stmt->close();
 
-// Fetch project, submission, and evaluation details for each group
+// Fetch project, submission, evaluation, and leader details for each group
 $groupDetails = [];
 foreach ($studentDetails as $detail) {
     if (!isset($groupDetails[$detail['group_id']]) && $detail['group_id']) {
@@ -298,6 +287,26 @@ foreach ($studentDetails as $detail) {
             'project_description' => 'N/A'
         ];
         $stmt->close();
+
+        // Fetch group leader
+        $leaderQuery = "
+            SELECT s.full_name
+            FROM students s
+            JOIN groups g ON s.id = g.leader_id
+            WHERE g.id = ?";
+        $stmt = $conn->prepare($leaderQuery);
+        if ($stmt === false) {
+            error_log("Prepare failed for leader query: " . $conn->error);
+            $message .= "<div class='alert alert-warning'>Warning: Failed to fetch leader for group ID {$detail['group_id']}.</div>";
+            $leaderName = 'Not Assigned';
+        } else {
+            $stmt->bind_param("i", $detail['group_id']);
+            $stmt->execute();
+            $leaderResult = $stmt->get_result();
+            $leader = $leaderResult->fetch_assoc();
+            $leaderName = $leader ? $leader['full_name'] : 'Not Assigned';
+            $stmt->close();
+        }
 
         // Fetch submissions
         $submissionsConditions = [];
@@ -429,7 +438,8 @@ foreach ($studentDetails as $detail) {
             'project_title' => $project['project_title'],
             'project_description' => $project['project_description'],
             'submissions' => $submissions,
-            'evaluations' => $evaluations
+            'evaluations' => $evaluations,
+            'leader_name' => $leaderName
         ];
     }
 }
@@ -446,28 +456,21 @@ $conn->close();
 
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="utf-8">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
     <meta name="description" content="">
     <meta name="author" content="">
-
     <title>Assessor - View Student Details</title>
 
-    <!-- Custom fonts for this template -->
     <link href="vendor/fontawesome-free/css/all.min.css" rel="stylesheet" type="text/css">
     <link href="https://fonts.googleapis.com/css?family=Nunito:200,200i,300,300i,400,400i,600,600i,700,700i,800,800i,900,900i" rel="stylesheet">
-
-    <!-- Custom styles for this template -->
     <link href="css/sb-admin-2.min.css" rel="stylesheet">
     <link href="css/sb-admin-2.css" rel="stylesheet">
-
-    <!-- Custom styles for this page -->
     <link href="vendor/datatables/dataTables.bootstrap4.min.css" rel="stylesheet">
 
-    <!-- Custom CSS for modal and icon -->
+    <!-- Custom CSS for modal, icon, and leader indicator -->
     <style>
         .info-icon {
             cursor: pointer;
@@ -487,14 +490,15 @@ $conn->close();
         .modal-header {
             background-color: #f8f9fa;
         }
+        .leader-indicator {
+            color: red;
+            font-weight: bold;
+            margin-left: 5px;
+        }
     </style>
 </head>
-
 <body id="page-top">
-
-    <!-- Page Wrapper -->
     <div id="wrapper">
-
         <!-- Sidebar -->
         <ul class="navbar-nav bg-gradient-primary sidebar sidebar-dark accordion" id="accordionSidebar">
             <a class="sidebar-brand d-flex align-items-center justify-content-center" href="lecturerdashboard.php">
@@ -565,10 +569,8 @@ $conn->close();
 
         <!-- Content Wrapper -->
         <div id="content-wrapper" class="d-flex flex-column">
-
             <!-- Main Content -->
             <div id="content">
-
                 <!-- Topbar -->
                 <nav class="navbar navbar-expand navbar-light bg-white topbar mb-4 static-top shadow">
                     <button id="sidebarToggleTop" class="btn btn-link d-md-none rounded-circle mr-3">
@@ -598,9 +600,7 @@ $conn->close();
 
                 <!-- Begin Page Content -->
                 <div class="container-fluid">
-
                     <?= $message ?>
-                    <!-- Page Heading -->
                     <div class="d-sm-flex align-items-center justify-content-between mb-4">
                         <h1 class="h3 mb-0 text-gray-800">View Student Details</h1>
                     </div>
@@ -674,7 +674,7 @@ $conn->close();
                             <h6 class="m-0 font-weight-bold text-primary">Filter Student Details</h6>
                         </div>
                         <div class="card-body">
-                            <form method="GET" action="">
+                            <form method="GET" action="" id="filterForm">
                                 <div class="row">
                                     <!-- Semester Filter -->
                                     <div class="col-md-4 mb-3">
@@ -743,18 +743,23 @@ $conn->close();
                                                 $groupId = $detail['group_id'] ?? 0;
                                                 $studentId = $detail['student_id'];
                                                 $groupInfo = isset($groupDetails[$groupId]) ? $groupDetails[$groupId] : [
-                                                            'group_name' => 'N/A',
-                                                            'project_title' => 'N/A',
-                                                            'project_description' => 'N/A',
-                                                            'submissions' => [],
-                                                            'evaluations' => []
-                                                        ];
-                                                        $submissionsJson = json_encode($groupInfo['submissions']);
-                                                        $evaluationsJson = json_encode($groupInfo['evaluations']);
-                                                        ?>
+                                                    'group_name' => 'N/A',
+                                                    'project_title' => 'N/A',
+                                                    'project_description' => 'N/A',
+                                                    'submissions' => [],
+                                                    'evaluations' => [],
+                                                    'leader_name' => 'Not Assigned'
+                                                ];
+                                                $submissionsJson = json_encode($groupInfo['submissions']);
+                                                $evaluationsJson = json_encode($groupInfo['evaluations']);
+                                                $leaderNameJson = json_encode($groupInfo['leader_name']);
+                                                ?>
                                                 <tr>
                                                     <td>
                                                         <?= htmlspecialchars($detail['full_name']) ?>
+                                                        <?php if ($detail['leader_id'] == $studentId): ?>
+                                                            <span class="leader-indicator">(L)</span>
+                                                        <?php endif; ?>
                                                         <?php if ($groupId > 0): ?>
                                                             <i class="fas fa-info-circle info-icon"
                                                                data-toggle="modal"
@@ -765,17 +770,18 @@ $conn->close();
                                                                data-project-title="<?= htmlspecialchars($groupInfo['project_title']) ?>"
                                                                data-project-description="<?= htmlspecialchars($groupInfo['project_description']) ?>"
                                                                data-submissions='<?= htmlspecialchars($submissionsJson) ?>'
-                                                               data-evaluations='<?= htmlspecialchars($evaluationsJson) ?>'></i>
+                                                               data-evaluations='<?= htmlspecialchars($evaluationsJson) ?>'
+                                                               data-leader-name='<?= htmlspecialchars($leaderNameJson) ?>'></i>
                                                         <?php endif; ?>
                                                     </td>
-                                                    <td><?php echo htmlspecialchars($detail['email']); ?></td>
-                                                    <td><?php echo htmlspecialchars($detail['username']); ?></td>
-                                                    <td><?php echo htmlspecialchars($detail['no_tel'] ?? 'N/A'); ?></td>
-                                                    <td><?php echo htmlspecialchars($detail['intake_year']); ?></td>
-                                                    <td><?php echo htmlspecialchars($detail['intake_month']); ?></td>
-                                                    <td><?php echo htmlspecialchars($detail['group_name'] ?? 'Not Assigned'); ?></td>
-                                                    <td><?php echo htmlspecialchars($detail['supervisor_name'] ?? 'Not Assigned'); ?></td>
-                                                    <td><?php echo htmlspecialchars($detail['assessor_name'] ?? 'Not Assigned'); ?></td>
+                                                    <td><?= htmlspecialchars($detail['email']) ?></td>
+                                                    <td><?= htmlspecialchars($detail['username']) ?></td>
+                                                    <td><?= htmlspecialchars($detail['no_tel'] ?? 'N/A') ?></td>
+                                                    <td><?= htmlspecialchars($detail['intake_year']) ?></td>
+                                                    <td><?= htmlspecialchars($detail['intake_month']) ?></td>
+                                                    <td><?= htmlspecialchars($detail['group_name'] ?? 'Not Assigned') ?></td>
+                                                    <td><?= htmlspecialchars($detail['supervisor_name'] ?? 'Not Assigned') ?></td>
+                                                    <td><?= htmlspecialchars($detail['assessor_name'] ?? 'Not Assigned') ?></td>
                                                     <td><?= number_format($detail['total_marks'], 2) ?>%</td>
                                                 </tr>
                                             <?php endforeach; ?>
@@ -789,10 +795,8 @@ $conn->close();
                             </div>
                         </div>
                     </div>
-
                 </div>
                 <!-- /.container-fluid -->
-
             </div>
             <!-- End of Main Content -->
 
@@ -804,12 +808,9 @@ $conn->close();
                     </div>
                 </div>
             </footer>
-            </footer>
             <!-- End of Footer -->
-
         </div>
         <!-- End of Content Wrapper -->
-
     </div>
     <!-- End of Page Wrapper -->
 
@@ -871,6 +872,10 @@ $conn->close();
                                 <td>Project Description</td>
                                 <td id="modal-project-description"></td>
                             </tr>
+                            <tr>
+                                <td>Group Leader</td>
+                                <td id="modal-leader-name"></td>
+                            </tr>
                         </tbody>
                     </table>
                     <h6>Submissions</h6>
@@ -884,7 +889,7 @@ $conn->close();
                                 <th>Type</th>
                             </tr>
                         </thead>
-                        <tbody id="modal-submissions"></tbody>
+                        <tbody id="modal-submissions-result"></tbody>
                     </table>
                     <h6>Markings</h6>
                     <table class="table table-bordered">
@@ -913,117 +918,129 @@ $conn->close();
     <script src="vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
 
     <!-- Core plugin JavaScript -->
-    <script src="vendor/jquery-easing/js/jquery.easing.min.js"></script>
+    <script src="vendor/jquery-easing/jquery.easing.min.js"></script>
 
     <!-- Custom scripts for all pages -->
-    <script src="js/sb-admin-js/sb-admin-2.min.js"></script>
+    <script src="js/sb-admin-2.min.js"></script>
 
     <!-- Page level plugins -->
-    <script src="vendor/datatables/js/jquery.dataTables.min.js"></script>
-    <script src="vendor/datatables/js/dataTables.bootstrap4.min.js"></script>
+    <script src="vendor/datatables/jquery.dataTables.min.js"></script>
+    <script src="vendor/datatables/dataTables.bootstrap4.min.js"></script>
 
     <!-- Page level custom scripts -->
-    <script src="js/pages/demo/datatables-demo.js"></script>
+    <script src="js/demo/datatables-demo.js"></script>
 
     <!-- Custom script for modal -->
     <script>
-$(document).ready(function() {
-    $('.info-icon').on('click', function() {
-        var studentId = $(this).data('student-id');
-        var groupId = $(this).data('group-id');
-        var groupName = $(this).data('group-name');
-        var projectTitle = $(this).data('project-title');
-        var projectDescription = $(this).data('project-description');
-        var submissions = $(this).data('submissions');
-        var evaluations = $(this).data('evaluations');
+    $(document).ready(function() {
+        $('.info-icon').on('click', function() {
+            var studentId = $(this).data('student-id');
+            var groupId = $(this).data('group-id');
+            var groupName = $(this).data('group-name');
+            var projectTitle = $(this).data('project-title');
+            var projectDescription = $(this).data('project-description');
+            var submissions = $(this).data('submissions');
+            var evaluations = $(this).data('evaluations');
+            var leaderName = $(this).data('leader-name');
 
-        console.log('Student ID:', studentId);
-        console.log('Group ID:', groupId);
-        console.log('Group Name:', groupName);
-        console.log('Submissions:', submissions);
-        console.log('Evaluations:', evaluations);
+            console.log('Student ID:', studentId);
+            console.log('Group ID:', groupId);
+            console.log('Group Name:', groupName);
+            console.log('Submissions:', submissions);
+            console.log('Evaluations:', evaluations);
+            console.log('Leader Name:', leaderName);
 
-        // Populate group information
-        $('#modal-group-name').text(groupName || 'N/A');
-        $('#modal-project-title').text(projectTitle || 'N/A');
-        $('#modal-project-description').text(projectDescription || 'N/A');
+            // Populate group information
+            $('#modal-group-name').text(groupName || 'N/A');
+            $('#modal-project-title').text(projectTitle || 'N/A');
+            $('#modal-project-description').text(projectDescription || '');
+            $('#modal-leader-name').text(leaderName ? JSON.parse(leaderName) : 'Not Assigned');
 
-        // Populate submissions table
-        var submissionsTable = $('#modal-submissions');
-        submissionsTable.empty();
-        if (submissions && Array.isArray(submissions) && submissions.length > 0) {
-            submissions.forEach(function(submission) {
-                if (submission.submission_type === 'group' || 
-                    (submission.submission_type === 'individual' && submission.student_id == studentId)) {
-                    var submittedAt = submission.submitted_at ? 
-                        new Date(submission.submitted_at).toLocaleString() : 'Not Submitted';
-                    var submitter = submission.submission_type === 'group' ? 
-                        (submission.group_members && submission.group_members.length > 0 ? 
-                            submission.group_members.join(', ') : 'Group Members N/A') : 
-                        (submission.submitter_name || 'N/A');
-                    var fileName = submission.file_path ? 
-                        submission.file_path.split('/').pop() : 'No File';
-                    var fileLink = submission.file_path ? 
-                        `<a href="${submission.file_path}" target="_blank">${fileName}</a>` : 
-                        'No File';
-                    var row = `
-                        <tr>
-                            <td>${submission.deliverable_name || 'N/A'}</td>
-                            <td>${submitter}</td>
-                            <td>${fileLink}</td>
-                            <td>${submittedAt}</td>
-                            <td>${submission.submission_type.charAt(0).toUpperCase() + submission.submission_type.slice(1)}</td>
-                        </tr>`;
-                    submissionsTable.append(row);
+            // Populate submissions table
+            var submissionsTable = $('#modal-submissions-result');
+            submissionsTable.empty();
+            if (submissions && Array.isArray(submissions) && submissions.length > 0) {
+                submissions.forEach(function(submission) {
+                    if (submission.submission_type === 'group' || 
+                        (submission.submission_type === 'individual' && submission.student_id == studentId)) {
+                        var submittedAt = submission.submitted_at ? 
+                            new Date(submission.submitted_at).toLocaleString() : 'Not Submitted';
+                        var submitter = submission.submission_type === 'group' ? 
+                            (submission.group_members && submission.group_members.length > 0 ? 
+                                submission.group_members.join(', ') : 'Group Members N/A') : 
+                            (submission.submitter_name || 'N/A');
+                        var fileName = submission.file_path ? 
+                            submission.file_path.split('/').pop() : 'No File';
+                        var fileLink = submission.file_path ? 
+                            `<a href="${submission.file_path}" target="_blank">${fileName}</a>` : 
+                            'No File';
+                        var row = `
+                            <tr>
+                                <td>${submission.deliverable_name || 'N/A'}</td>
+                                <td>${submitter}</td>
+                                <td>${fileLink}</td>
+                                <td>${submittedAt}</td>
+                                <td>${submission.submission_type.charAt(0).toUpperCase() + submission.submission_type.slice(1)}</td>
+                            </tr>
+                        `;
+                        submissionsTable.append(row);
+                    }
+                });
+                if (submissionsTable.children().length === 0) {
+                    submissionsTable.append('<tr><td colspan="5">No submissions found.</td></tr>');
                 }
-            });
-            if (submissionsTable.children().length === 0) {
+            } else {
+                console.log('No submissions data or invalid format');
                 submissionsTable.append('<tr><td colspan="5">No submissions found.</td></tr>');
             }
-        } else {
-            console.log('No submissions data or invalid format');
-            submissionsTable.append('<tr><td colspan="5">No submissions found.</td></tr>');
-        }
 
-        // Populate evaluations table
-        var evaluationsTable = $('#modal-evaluations');
-        evaluationsTable.empty();
-        console.log('Starting evaluations processing for student ID:', studentId, 'and group ID:', groupId);
-        if (evaluations && Array.isArray(evaluations) && evaluations.length > 0) {
-            var hasEvaluations = false;
-            evaluations.forEach(function(evaluation, index) {
-                console.log(`Processing evaluation[${index}]:`, evaluation);
-                if ((evaluation.student_id == studentId) || (evaluation.group_id == groupId)) {
-                    hasEvaluations = true;
-                    var evalDate = evaluation.date ? new Date(evaluation.date).toLocaleDateString() : 'N/A';
-                    var grade = evaluation.evaluation_grade !== null && evaluation.evaluation_grade !== undefined ? 
-                        Number(evaluation.evaluation_grade).toFixed(2) : 'N/A';
-                    var row = `
-                        <tr>
-                            <td>${evaluation.deliverable_name || 'N/A'}</td>
-                            <td>${evaluation.marker_name || 'N/A'}</td>
-                            <td>${evaluation.type || 'N/A'}</td>
-                            <td>${grade}</td>
-                            <td>${evaluation.feedback || 'No feedback provided'}</td>
-                            <td>${evalDate}</td>
-                        </tr>`;
-                    evaluationsTable.append(row);
-                    console.log(`Added evaluation row for student ID ${studentId} or group ID ${groupId}:`, evaluation);
-                } else {
-                    console.log(`Skipped evaluation[${index}]: student_id[${evaluation.student_id}] does not match studentId[${studentId}], and group_id[${evaluation.group_id}] does not match groupId[${groupId}]`);
+            // Populate evaluations table
+            var evaluationsTable = $('#modal-evaluations');
+            evaluationsTable.empty();
+            console.log('Starting evaluations processing for student ID:', studentId, 'and group ID:', groupId);
+            if (evaluations && Array.isArray(evaluations) && evaluations.length > 0) {
+                var hasEvaluations = false;
+                evaluations.forEach(function(evaluation, index) {
+                    console.log(`Processing evaluation[${index}]:`, evaluation);
+                    if ((evaluation.student_id == studentId) || (evaluation.group_id == groupId)) {
+                        hasEvaluations = true;
+                        var evalDate = evaluation.date ? new Date(evaluation.date).toLocaleDateString() : 'N/A';
+                        var grade = evaluation.evaluation_grade !== null && evaluation.evaluation_grade !== undefined ? 
+                            Number(evaluation.evaluation_grade).toFixed(2) : 'N/A';
+                        var row = `
+                            <tr>
+                                <td>${evaluation.deliverable_name || 'N/A'}</td>
+                                <td>${evaluation.marker_name || 'N/A'}</td>
+                                <td>${evaluation.type || 'N/A'}</td>
+                                <td>${grade}</td>
+                                <td>${evaluation.feedback || 'No feedback provided'}</td>
+                                <td>${evalDate}</td>
+                            </tr>
+                        `;
+                        evaluationsTable.append(row);
+                        console.log(`Added evaluation row for student ID ${studentId} or group ID ${groupId}:`, evaluation);
+                    } else {
+                        console.log(`Skipped evaluation[${index}]: student_id[${evaluation.student_id}] does not match studentId[${studentId}], and group_id[${evaluation.group_id}] does not match groupId[${groupId}]`);
+                    }
+                });
+                if (!hasEvaluations) {
+                    evaluationsTable.append('<tr><td colspan="6">No evaluations found for this student or group.</td></tr>');
+                    console.log('No evaluations matched student ID:', studentId, 'or group ID:', groupId);
                 }
-            });
-            if (!hasEvaluations) {
-                evaluationsTable.append('<tr><td colspan="6">No evaluations found for this student or group.</td></tr>');
-                console.log('No evaluations matched student ID:', studentId, 'or group ID:', groupId);
+            } else {
+                console.log('No evaluation data received or invalid format');
+                evaluationsTable.append('<tr><td colspan="6">No evaluations found.</td></tr>');
             }
-        } else {
-            console.log('No evaluation data received or invalid format');
-            evaluationsTable.append('<tr><td colspan="6">No evaluations found.</td></tr>');
-        }
-    });
-});
-</script>
+        });
 
+        // Handle Enter key on username input
+        $('#username').on('keypress', function(event) {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                $('#filterForm').submit();
+            }
+        });
+    });
+    </script>
 </body>
 </html>

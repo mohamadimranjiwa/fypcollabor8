@@ -196,7 +196,7 @@ $totalProjectsResult = $stmt->get_result();
 $totalProjects = ($totalProjectsResult && $row = $totalProjectsResult->fetch_assoc()) ? $row['total_projects'] : 0;
 $stmt->close();
 
-// Fetch student details with group ID and total evaluation grades (including group evaluations)
+// Fetch student details with group ID, total evaluation grades, and leader status
 $studentDetailsConditions = [];
 $studentDetailsParams = [];
 $studentDetailsParamTypes = "";
@@ -235,6 +235,7 @@ $studentDetailsQuery = "
         s.intake_month,
         g.id AS group_id,
         g.name AS group_name,
+        g.leader_id,
         ls.full_name AS supervisor_name,
         la.full_name AS assessor_name,
         (
@@ -251,7 +252,7 @@ $studentDetailsQuery = "
 if (!empty($studentDetailsConditions)) {
     $studentDetailsQuery .= " WHERE " . implode(" AND ", $studentDetailsConditions);
 }
-$studentDetailsQuery .= " GROUP BY s.id, s.full_name, s.email, s.username, s.no_tel, s.intake_year, s.intake_month, g.id, g.name, ls.full_name, la.full_name
+$studentDetailsQuery .= " GROUP BY s.id, s.full_name, s.email, s.username, s.no_tel, s.intake_year, s.intake_month, g.id, g.name, g.leader_id, ls.full_name, la.full_name
     ORDER BY s.full_name";
 $stmt = $conn->prepare($studentDetailsQuery);
 if ($stmt === false) {
@@ -265,7 +266,7 @@ $studentDetailsResult = $stmt->get_result();
 $studentDetails = $studentDetailsResult ? $studentDetailsResult->fetch_all(MYSQLI_ASSOC) : [];
 $stmt->close();
 
-// Fetch project, submission, and evaluation details for each group
+// Fetch project, submission, evaluation, and leader details for each group
 $groupDetails = [];
 foreach ($studentDetails as $detail) {
     if (!isset($groupDetails[$detail['group_id']]) && $detail['group_id']) {
@@ -300,6 +301,26 @@ foreach ($studentDetails as $detail) {
             'project_description' => 'N/A'
         ];
         $stmt->close();
+
+        // Fetch group leader
+        $leaderQuery = "
+            SELECT s.full_name
+            FROM students s
+            JOIN groups g ON s.id = g.leader_id
+            WHERE g.id = ?";
+        $stmt = $conn->prepare($leaderQuery);
+        if ($stmt === false) {
+            error_log("Prepare failed for leader query: " . $conn->error);
+            $message .= "<div class='alert alert-warning'>Warning: Failed to fetch leader for group ID {$detail['group_id']}.</div>";
+            $leaderName = 'Not Assigned';
+        } else {
+            $stmt->bind_param("i", $detail['group_id']);
+            $stmt->execute();
+            $leaderResult = $stmt->get_result();
+            $leader = $leaderResult->fetch_assoc();
+            $leaderName = $leader ? $leader['full_name'] : 'Not Assigned';
+            $stmt->close();
+        }
 
         // Fetch submissions
         $submissionsConditions = [];
@@ -431,7 +452,8 @@ foreach ($studentDetails as $detail) {
             'project_title' => $project['project_title'],
             'project_description' => $project['project_description'],
             'submissions' => $submissions,
-            'evaluations' => $evaluations
+            'evaluations' => $evaluations,
+            'leader_name' => $leaderName
         ];
     }
 }
@@ -469,7 +491,7 @@ $conn->close();
     <!-- Custom styles for this page -->
     <link href="vendor/datatables/dataTables.bootstrap4.min.css" rel="stylesheet">
 
-    <!-- Custom CSS for modal and icon -->
+    <!-- Custom CSS for modal, icon, and leader indicator -->
     <style>
         .info-icon {
             cursor: pointer;
@@ -488,6 +510,11 @@ $conn->close();
         }
         .modal-header {
             background-color: #f8f9fa;
+        }
+        .leader-indicator {
+            color: red;
+            font-weight: bold;
+            margin-left: 5px;
         }
     </style>
 </head>
@@ -538,7 +565,6 @@ $conn->close();
                         <h6 class="collapse-header">Guidance Resources:</h6>
                         <a class="collapse-item <?= !$isSupervisor ? 'disabled' : '' ?>" href="lectmanagemeetings.php">Manage Meetings</a>
                         <a class="collapse-item <?= !$isSupervisor ? 'disabled' : '' ?>" href="lectviewdiary.php">View Student Diary</a>
-                        <?php /* <a class="collapse-item <?= !$isSupervisor ? 'disabled' : '' ?>" href="lectevaluatestudent.php">Evaluate Students</a> */ ?>
                         <a class="collapse-item active <?= !$isSupervisor ? 'disabled' : '' ?>" href="lectviewstudentdetails.php">View Student Details</a>
                     </div>
                 </div>
@@ -555,7 +581,6 @@ $conn->close();
                 <div id="collapsePages" class="collapse" aria-labelledby="headingPages" data-parent="#accordionSidebar">
                     <div class="bg-white py-2 collapse-inner rounded">
                         <h6 class="collapse-header">Performance Review:</h6>
-                        <?php /* <a class="collapse-item <?= !$isAssessor ? 'disabled' : '' ?>" href="assevaluatestudent.php">Evaluate Students</a> */ ?>
                         <a class="collapse-item <?= !$isAssessor ? 'disabled' : '' ?>" href="assviewstudentdetails.php">View Student Details</a>
                         <div class="collapse-divider"></div>
                         <h6 class="collapse-header">Component Analysis:</h6>
@@ -756,14 +781,19 @@ $conn->close();
                                                     'project_title' => 'N/A',
                                                     'project_description' => 'N/A',
                                                     'submissions' => [],
-                                                    'evaluations' => []
+                                                    'evaluations' => [],
+                                                    'leader_name' => 'Not Assigned'
                                                 ];
                                                 $submissionsJson = json_encode($groupInfo['submissions']);
                                                 $evaluationsJson = json_encode($groupInfo['evaluations']);
+                                                $leaderNameJson = json_encode($groupInfo['leader_name']);
                                                 ?>
                                                 <tr>
                                                     <td>
                                                         <?= htmlspecialchars($detail['full_name']) ?>
+                                                        <?php if ($detail['leader_id'] == $studentId): ?>
+                                                            <span class="leader-indicator">(L)</span>
+                                                        <?php endif; ?>
                                                         <?php if ($groupId > 0): ?>
                                                             <i class="fas fa-info-circle info-icon"
                                                                data-toggle="modal"
@@ -774,7 +804,8 @@ $conn->close();
                                                                data-project-title="<?= htmlspecialchars($groupInfo['project_title']) ?>"
                                                                data-project-description="<?= htmlspecialchars($groupInfo['project_description']) ?>"
                                                                data-submissions='<?= htmlspecialchars($submissionsJson) ?>'
-                                                               data-evaluations='<?= htmlspecialchars($evaluationsJson) ?>'></i>
+                                                               data-evaluations='<?= htmlspecialchars($evaluationsJson) ?>'
+                                                               data-leader-name='<?= htmlspecialchars($leaderNameJson) ?>'></i>
                                                         <?php endif; ?>
                                                     </td>
                                                     <td><?= htmlspecialchars($detail['email']) ?></td>
@@ -830,7 +861,7 @@ $conn->close();
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title" id="exampleModalLabel">Ready to Leave?</h5>
-                    <button class="close" type="button" data-dismiss="modal" aria-label="Close">
+                    <button class="close" type="button" data-dismiss="modal">
                         <span aria-hidden="true">×</span>
                     </button>
                 </div>
@@ -874,6 +905,10 @@ $conn->close();
                             <tr>
                                 <td>Project Description</td>
                                 <td id="modal-project-description"></td>
+                            </tr>
+                            <tr>
+                                <td>Group Leader</td>
+                                <td id="modal-leader-name"></td>
                             </tr>
                         </tbody>
                     </table>
@@ -940,17 +975,20 @@ $conn->close();
             var projectDescription = $(this).data('project-description');
             var submissions = $(this).data('submissions');
             var evaluations = $(this).data('evaluations');
+            var leaderName = $(this).data('leader-name');
 
             console.log('Student ID:', studentId);
             console.log('Group ID:', groupId);
             console.log('Group Name:', groupName);
             console.log('Submissions:', submissions);
             console.log('Evaluations:', evaluations);
+            console.log('Leader Name:', leaderName);
 
             // Populate group information
             $('#modal-group-name').text(groupName || 'N/A');
             $('#modal-project-title').text(projectTitle || 'N/A');
             $('#modal-project-description').text(projectDescription || '');
+            $('#modal-leader-name').text(leaderName ? JSON.parse(leaderName) : 'Not Assigned');
 
             // Populate submissions table
             var submissionsTable = $('#modal-submissions-result');

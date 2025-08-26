@@ -39,7 +39,7 @@ $personalInfo = [
 $message = "";
 
 // Fetch semesters for the filter
-$semestersQuery = "SELECT semester_name FROM semesters ORDER BY semester_name DESC";
+$semestersQuery = "SELECT semester_name, start_date FROM semesters ORDER BY start_date DESC";
 $semestersResult = $conn->query($semestersQuery) or die("Error in semesters query: " . $conn->error);
 $semesters = $semestersResult->fetch_all(MYSQLI_ASSOC);
 
@@ -54,39 +54,51 @@ $selectedSemester = isset($_GET['semester']) && trim($_GET['semester']) !== '' ?
 $searchUsername = isset($_GET['username']) ? trim($_GET['username']) : '';
 $selectedGroup = isset($_GET['group_name']) ? trim($_GET['group_name']) : '';
 
-// Fetch group names for the filter, dependent on the selected semester
-$groupFilterQuery = "
-    SELECT DISTINCT g.name 
+// Fetch groups for the filter (semester-based)
+$groupsConditions = [];
+$groupsParams = [];
+$groupsParamTypes = "";
+
+$groupsConditions[] = "g.status = 'Approved'";
+
+if ($selectedSemester) {
+    $groupsConditions[] = "sem.semester_name = ?";
+    $groupsParams[] = $selectedSemester;
+    $groupsParamTypes .= "s";
+}
+
+$groupsQuery = "
+    SELECT DISTINCT g.name
     FROM groups g
-    JOIN group_members gm ON g.id = gm.group_id
-    JOIN students s ON gm.student_id = s.id
-    WHERE g.name IS NOT NULL";
-$groupFilterParams = [];
-$groupFilterParamTypes = "";
-if ($selectedSemester && $selectedSemester !== 'N/A') {
-    $groupFilterQuery .= " AND CONCAT(s.intake_month, ' ', s.intake_year) = ?";
-    $groupFilterParams[] = $selectedSemester;
-    $groupFilterParamTypes .= "s";
+    LEFT JOIN group_members gm ON g.id = gm.group_id
+    LEFT JOIN students s ON gm.student_id = s.id
+    LEFT JOIN semesters sem ON s.intake_year = YEAR(sem.start_date) AND s.intake_month = MONTHNAME(sem.start_date)";
+if (!empty($groupsConditions)) {
+    $groupsQuery .= " WHERE " . implode(" AND ", $groupsConditions);
 }
-$groupFilterQuery .= " ORDER BY g.name ASC";
-$stmtGroupsFilter = $conn->prepare($groupFilterQuery);
-if ($stmtGroupsFilter === false) {
-    die("Prepare failed for group filter query: " . $conn->error);
+$groupsQuery .= " ORDER BY g.name ASC";
+error_log("Groups Query: $groupsQuery");
+$stmt = $conn->prepare($groupsQuery);
+if ($stmt === false) {
+    die("Prepare failed for groups query: " . $conn->error);
 }
-if (!empty($groupFilterParams)) {
-    $stmtGroupsFilter->bind_param($groupFilterParamTypes, ...$groupFilterParams);
+if (!empty($groupsParams)) {
+    $stmt->bind_param($groupsParamTypes, ...$groupsParams);
 }
-$stmtGroupsFilter->execute();
-$groupsResult = $stmtGroupsFilter->get_result();
+$stmt->execute();
+$groupsResult = $stmt->get_result();
 $groups = $groupsResult->fetch_all(MYSQLI_ASSOC);
-$stmtGroupsFilter->close();
+$stmt->close();
 
 // Fetch total students
 $totalStudentsConditions = [];
 $totalStudentsParams = [];
 $totalStudentsParamTypes = "";
+
+$totalStudentsConditions[] = "g.status = 'Approved'";
+
 if ($selectedSemester) {
-    $totalStudentsConditions[] = "CONCAT(s.intake_month, ' ', s.intake_year) = ?";
+    $totalStudentsConditions[] = "sem.semester_name = ?";
     $totalStudentsParams[] = $selectedSemester;
     $totalStudentsParamTypes .= "s";
 }
@@ -100,12 +112,14 @@ if ($selectedGroup) {
     $totalStudentsParams[] = $selectedGroup;
     $totalStudentsParamTypes .= "s";
 }
+
 $totalStudentsQuery = "
     SELECT COUNT(DISTINCT s.id) AS total_students 
     FROM students s
     LEFT JOIN group_members gm ON s.id = gm.student_id
     LEFT JOIN groups g ON gm.group_id = g.id
-    LEFT JOIN projects p ON g.id = p.group_id";
+    LEFT JOIN projects p ON g.id = p.group_id
+    LEFT JOIN semesters sem ON s.intake_year = YEAR(sem.start_date) AND s.intake_month = MONTHNAME(sem.start_date)";
 if (!empty($totalStudentsConditions)) {
     $totalStudentsQuery .= " WHERE " . implode(" AND ", $totalStudentsConditions);
 }
@@ -125,9 +139,11 @@ $stmt->close();
 $totalProjectsConditions = [];
 $totalProjectsParams = [];
 $totalProjectsParamTypes = "";
+
 $totalProjectsConditions[] = "g.status = 'Approved'";
+
 if ($selectedSemester) {
-    $totalProjectsConditions[] = "CONCAT(s.intake_month, ' ', s.intake_year) = ?";
+    $totalProjectsConditions[] = "sem.semester_name = ?";
     $totalProjectsParams[] = $selectedSemester;
     $totalProjectsParamTypes .= "s";
 }
@@ -136,12 +152,14 @@ if ($selectedGroup) {
     $totalProjectsParams[] = $selectedGroup;
     $totalProjectsParamTypes .= "s";
 }
+
 $totalProjectsQuery = "
     SELECT COUNT(DISTINCT p.project_id) AS total_projects 
     FROM projects p
     JOIN groups g ON p.group_id = g.id
     LEFT JOIN group_members gm ON g.id = gm.group_id
-    LEFT JOIN students s ON gm.student_id = s.id";
+    LEFT JOIN students s ON gm.student_id = s.id
+    LEFT JOIN semesters sem ON s.intake_year = YEAR(sem.start_date) AND s.intake_month = MONTHNAME(sem.start_date)";
 if (!empty($totalProjectsConditions)) {
     $totalProjectsQuery .= " WHERE " . implode(" AND ", $totalProjectsConditions);
 }
@@ -161,8 +179,11 @@ $stmt->close();
 $studentDetailsConditions = [];
 $studentDetailsParams = [];
 $studentDetailsParamTypes = "";
+
+$studentDetailsConditions[] = "g.status = 'Approved'";
+
 if ($selectedSemester) {
-    $studentDetailsConditions[] = "CONCAT(s.intake_month, ' ', s.intake_year) = ?";
+    $studentDetailsConditions[] = "sem.semester_name = ?";
     $studentDetailsParams[] = $selectedSemester;
     $studentDetailsParamTypes .= "s";
 }
@@ -176,6 +197,7 @@ if ($selectedGroup) {
     $studentDetailsParams[] = $selectedGroup;
     $studentDetailsParamTypes .= "s";
 }
+
 $studentDetailsQuery = "
     SELECT 
         s.id AS student_id,
@@ -200,7 +222,7 @@ $studentDetailsQuery = "
     LEFT JOIN groups g ON gm.group_id = g.id
     LEFT JOIN lecturers ls ON g.lecturer_id = ls.id
     LEFT JOIN lecturers la ON g.assessor_id = la.id
-";
+    LEFT JOIN semesters sem ON s.intake_year = YEAR(sem.start_date) AND s.intake_month = MONTHNAME(sem.start_date)";
 if (!empty($studentDetailsConditions)) {
     $studentDetailsQuery .= " WHERE " . implode(" AND ", $studentDetailsConditions);
 }
@@ -339,7 +361,7 @@ foreach ($studentDetails as $detail) {
                 $submission['submitter_name'] = $submission['submitter_name'] ?? 'N/A';
             }
         }
-        unset($submission); // Unset reference to avoid issues
+        unset($submission);
 
         // Fetch evaluation details (individual and group)
         $evaluationsQuery = "
@@ -353,16 +375,16 @@ foreach ($studentDetails as $detail) {
                 e.date,
                 'Individual' AS type,
                 d.name AS deliverable_name,
-                COALESCE(c.full_name, ls.full_name, la.full_name, 'N/A') AS marker_name
+                COALESCE(ls.full_name, la.full_name, c.full_name, 'N/A') AS marker_name
             FROM evaluation e
             JOIN deliverables d ON e.deliverable_id = d.id
-            LEFT JOIN coordinators c ON e.coordinator_id = c.id
             LEFT JOIN lecturers ls ON e.supervisor_id = ls.id
             LEFT JOIN lecturers la ON e.assessor_id = la.id
+            LEFT JOIN coordinators c ON e.coordinator_id = c.id
             WHERE e.student_id IN (
                 SELECT student_id FROM group_members WHERE group_id = ?
             )
-            GROUP BY e.id, e.student_id, e.evaluation_grade, e.feedback, e.date, d.name, c.full_name, ls.full_name, la.full_name
+            GROUP BY e.id, e.student_id, e.evaluation_grade, e.feedback, e.date, d.name, ls.full_name, la.full_name, c.full_name
             
             UNION ALL
             
@@ -433,6 +455,7 @@ $conn->close();
     <link href="vendor/fontawesome-free/css/all.min.css" rel="stylesheet" type="text/css">
     <link href="https://fonts.googleapis.com/css?family=Nunito:200,200i,300,300i,400,400i,600,600i,700,700i,800,800i,900,900i" rel="stylesheet">
     <link href="css/sb-admin-2.min.css" rel="stylesheet">
+    <link href="css/sb-admin-2.css" rel="stylesheet">
     <link href="vendor/datatables/dataTables.bootstrap4.min.css" rel="stylesheet">
 
     <!-- Custom CSS for modal, icon, and leader indicator -->
@@ -451,6 +474,9 @@ $conn->close();
         .modal-body h6 {
             margin-top: 1.5rem;
             margin-bottom: 0.5rem;
+        }
+        .modal-header {
+            background-color: #f8f9fa;
         }
         .leader-indicator {
             color: red;
@@ -635,10 +661,10 @@ $conn->close();
                         </div>
                     </div>
 
-                    <!-- Filters Card -->
+                    <!-- Filter Card -->
                     <div class="card shadow mb-4">
                         <div class="card-header py-3">
-                            <h6 class="m-0 font-weight-bold text-primary">Filter Students</h6>
+                            <h6 class="m-0 font-weight-bold text-primary">Filter Student Details</h6>
                         </div>
                         <div class="card-body">
                             <form method="GET" action="">
@@ -801,7 +827,8 @@ $conn->close();
     </div>
 
     <!-- Group Details Modal -->
-    <div class="modal fade" id="groupModal" tabindex="-1" role="dialog" aria-labelledby="groupModalLabel" aria-hidden="true">
+    <div class="modal fade" id="groupModal" tabindex="-1" role="dialog" aria-labelledby="groupModalLabel"
+        aria-hidden="true">
         <div class="modal-dialog modal-lg" role="document">
             <div class="modal-content">
                 <div class="modal-header">
@@ -842,25 +869,24 @@ $conn->close();
                     <table class="table table-bordered">
                         <thead>
                             <tr>
-                                <th>Deliverable Name</th>
+                                <th>Name</th>
                                 <th>Submitter</th>
-                                <th>File</th>
+                                <th>File Name</th>
                                 <th>Submitted At</th>
                                 <th>Type</th>
                             </tr>
                         </thead>
-                        <tbody id="modal-submissions"></tbody>
+                        <tbody id="modal-submissions-result"></tbody>
                     </table>
-                    <h6>Marking Details</h6>
+                    <h6>Markings</h6>
                     <table class="table table-bordered">
                         <thead>
                             <tr>
-                                <th>Deliverable Name</th>
+                                <th>Name</th>
                                 <th>Marker</th>
                                 <th>Type</th>
                                 <th>Grade</th>
                                 <th>Feedback</th>
-                                <th>Score</th>
                                 <th>Date</th>
                             </tr>
                         </thead>
@@ -914,23 +940,26 @@ $conn->close();
             // Populate group information
             $('#modal-group-name').text(groupName || 'N/A');
             $('#modal-project-title').text(projectTitle || 'N/A');
-            $('#modal-project-description').text(projectDescription || 'N/A');
+            $('#modal-project-description').text(projectDescription || '');
             $('#modal-leader-name').text(leaderName ? JSON.parse(leaderName) : 'Not Assigned');
 
             // Populate submissions table
-            var submissionsTable = $('#modal-submissions');
+            var submissionsTable = $('#modal-submissions-result');
             submissionsTable.empty();
             if (submissions && Array.isArray(submissions) && submissions.length > 0) {
                 submissions.forEach(function(submission) {
                     if (submission.submission_type === 'group' || 
                         (submission.submission_type === 'individual' && submission.student_id == studentId)) {
-                        var submittedAt = submission.submitted_at ? new Date(submission.submitted_at).toLocaleString() : 'Not Submitted';
+                        var submittedAt = submission.submitted_at ? 
+                            new Date(submission.submitted_at).toLocaleString() : 'Not Submitted';
                         var submitter = submission.submission_type === 'group' ? 
                             (submission.group_members && submission.group_members.length > 0 ? 
                                 submission.group_members.join(', ') : 'Group Members N/A') : 
                             (submission.submitter_name || 'N/A');
+                        var fileName = submission.file_path ? 
+                            submission.file_path.split('/').pop() : 'No File';
                         var fileLink = submission.file_path ? 
-                            `<a href="${submission.file_path}" target="_blank">${submission.file_path.split('/').pop()}</a>` : 
+                            `<a href="${submission.file_path}" target="_blank">${fileName}</a>` : 
                             'No File';
                         var row = `
                             <tr>
@@ -945,7 +974,7 @@ $conn->close();
                     }
                 });
                 if (submissionsTable.children().length === 0) {
-                    submissionsTable.append('<tr><td colspan="5">No relevant submissions found.</td></tr>');
+                    submissionsTable.append('<tr><td colspan="5">No submissions found.</td></tr>');
                 }
             } else {
                 console.log('No submissions data or invalid format');
@@ -959,65 +988,39 @@ $conn->close();
             if (evaluations && Array.isArray(evaluations) && evaluations.length > 0) {
                 var hasEvaluations = false;
                 evaluations.forEach(function(evaluation, index) {
-                    console.log(`Processing evaluation ${index}:`, evaluation);
+                    console.log(`Processing evaluation[${index}]:`, evaluation);
                     if ((evaluation.student_id == studentId) || (evaluation.group_id == groupId)) {
                         hasEvaluations = true;
                         var evalDate = evaluation.date ? new Date(evaluation.date).toLocaleDateString() : 'N/A';
                         var grade = evaluation.evaluation_grade !== null && evaluation.evaluation_grade !== undefined ? 
-                            parseFloat(evaluation.evaluation_grade).toFixed(2) : 'N/A';
+                            Number(evaluation.evaluation_grade).toFixed(2) : 'N/A';
                         var row = `
                             <tr>
                                 <td>${evaluation.deliverable_name || 'N/A'}</td>
                                 <td>${evaluation.marker_name || 'N/A'}</td>
-                                <td>${evaluation.type}</td>
+                                <td>${evaluation.type || 'N/A'}</td>
                                 <td>${grade}</td>
                                 <td>${evaluation.feedback || 'No feedback provided'}</td>
-                                <td>${grade}</td>
                                 <td>${evalDate}</td>
                             </tr>
                         `;
                         evaluationsTable.append(row);
                         console.log(`Added evaluation row for student ID ${studentId} or group ID ${groupId}:`, evaluation);
                     } else {
-                        console.log(`Skipping evaluation ${index}: student_id ${evaluation.student_id} does not match modal studentId ${studentId}, and group_id ${evaluation.group_id} does not match modal groupId ${groupId}`);
+                        console.log(`Skipped evaluation[${index}]: student_id[${evaluation.student_id}] does not match studentId[${studentId}], and group_id[${evaluation.group_id}] does not match groupId[${groupId}]`);
                     }
                 });
                 if (!hasEvaluations) {
-                    evaluationsTable.append('<tr><td colspan="7">No evaluations found for this student or group.</td></tr>');
+                    evaluationsTable.append('<tr><td colspan="6">No evaluations found for this student or group.</td></tr>');
                     console.log('No evaluations matched student ID:', studentId, 'or group ID:', groupId);
                 }
             } else {
-                console.log('No evaluations data received or invalid format');
-                evaluationsTable.append('<tr><td colspan="7">No evaluations found.</td></tr>');
+                console.log('No evaluation data received or invalid format');
+                evaluationsTable.append('<tr><td colspan="6">No evaluations found.</td></tr>');
             }
         });
     });
     </script>
 
-    <!-- Function to handle filter changes and update URL -->
-    <script>
-    function handleFilterChange() {
-        const semester = $('#semester').val();
-        const username = $('#username').val();
-        const groupName = $('#group_name').val();
-        let url = 'coorviewstudentdetails.php?';
-        if (semester) url += `semester=${encodeURIComponent(semester)}&`;
-        if (username) url += `username=${encodeURIComponent(username)}&`;
-        if (groupName) url += `group_name=${encodeURIComponent(groupName)}&`;
-        url = url.endsWith('&') || url.endsWith('?') ? url.slice(0, -1) : url;
-        window.location.href = url;
-    }
-
-    // Attach event listeners
-    $('#semester, #group_name').on('change', function() {
-        handleFilterChange();
-    });
-    $('#username').on('keypress', function(event) {
-        if (event.key === 'Enter') {
-            event.preventDefault();
-            handleFilterChange();
-        }
-    });
-    </script>
 </body>
 </html>
