@@ -91,7 +91,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         $weekEndStr = $weekEnd->format('Y-m-d');
 
         $diaryQuery = "
-            SELECT d.id, d.diary_content, d.title, d.status, d.entry_date,
+            SELECT d.id, d.diary_content, d.title, d.entry_date,
                    s.full_name AS student_name
             FROM diary d
             JOIN group_members gm ON d.student_id = gm.student_id
@@ -122,7 +122,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             echo json_encode([
                 'title' => htmlspecialchars($diary['title']),
                 'content' => nl2br(htmlspecialchars($diary['diary_content'])),
-                'status' => htmlspecialchars($diary['status']),
                 'entry_date' => htmlspecialchars($diary['entry_date']),
                 'student_name' => htmlspecialchars($diary['student_name'])
             ]);
@@ -199,8 +198,9 @@ $searchStudent = isset($_GET['student_name']) ? trim($_GET['student_name']) : ''
 $selectedGroup = isset($_GET['group_name']) ? $_GET['group_name'] : '';
 $selectedWeek = isset($_GET['week']) && is_numeric($_GET['week']) ? intval($_GET['week']) : 0;
 
-// Fetch semester start date
+// Fetch semester start date and calculate current week
 $semesterStartDate = null;
+$currentWeek = 0;
 if ($selectedSemester) {
     $semesterQuery = "SELECT start_date FROM semesters WHERE semester_name = ? LIMIT 1";
     $stmt = $conn->prepare($semesterQuery);
@@ -210,15 +210,59 @@ if ($selectedSemester) {
     $semester = $result->fetch_assoc();
     $semesterStartDate = $semester ? $semester['start_date'] : null;
     $stmt->close();
+
+    if ($semesterStartDate) {
+        $startDate = new DateTime($semesterStartDate);
+        $currentDate = new DateTime('2025-08-26'); // Current date as per system
+        $daysDifference = $startDate->diff($currentDate)->days;
+        $currentWeek = floor($daysDifference / 7) + 1;
+        if ($currentWeek < 1) $currentWeek = 1;
+        if ($currentWeek > 12) $currentWeek = 12; // Assuming max 12 weeks
+    }
 }
 
-// Summary statistics
+// Summary statistics: Total entries and total students
 $totalEntries = 0;
-$pendingReviews = 0;
-$approvedEntries = 0;
+$totalStudents = 0;
 
+// Parameters for total students query (no week filter)
+$studentCountQuery = "
+    SELECT COUNT(DISTINCT s.id) AS total_students
+    FROM students s
+    JOIN group_members gm ON s.id = gm.student_id
+    JOIN groups g ON gm.group_id = g.id
+    JOIN semesters sem ON s.intake_year = YEAR(sem.start_date) AND s.intake_month = MONTHNAME(sem.start_date)
+    WHERE g.lecturer_id = ? AND g.status = 'Approved'
+";
+$studentParams = [$lecturerID];
+$studentParamTypes = "i";
+if ($selectedSemester) {
+    $studentCountQuery .= " AND sem.semester_name = ?";
+    $studentParams[] = $selectedSemester;
+    $studentParamTypes .= "s";
+}
+if ($searchStudent) {
+    $studentCountQuery .= " AND s.full_name LIKE ?";
+    $studentParams[] = "%$searchStudent%";
+    $studentParamTypes .= "s";
+}
+if ($selectedGroup) {
+    $studentCountQuery .= " AND g.name = ?";
+    $studentParams[] = $selectedGroup;
+    $studentParamTypes .= "s";
+}
+
+$stmt = $conn->prepare($studentCountQuery);
+$stmt->bind_param($studentParamTypes, ...$studentParams);
+$stmt->execute();
+$result = $stmt->get_result();
+$row = $result->fetch_assoc();
+$totalStudents = $row['total_students'] ?? 0;
+$stmt->close();
+
+// For total entries, use a separate query that filters by week if selected
 $query = "
-    SELECT d.status
+    SELECT COUNT(DISTINCT d.id) AS total_entries
     FROM diary d
     JOIN group_members gm ON d.student_id = gm.student_id
     JOIN groups g ON gm.group_id = g.id
@@ -251,19 +295,13 @@ if ($selectedWeek && $semesterStartDate) {
     $params[] = $weekEnd;
     $paramTypes .= "ss";
 }
+
 $stmt = $conn->prepare($query);
 $stmt->bind_param($paramTypes, ...$params);
 $stmt->execute();
 $result = $stmt->get_result();
-
-while ($row = $result->fetch_assoc()) {
-    $totalEntries++;
-    if ($row['status'] === 'Pending') {
-        $pendingReviews++;
-    } elseif ($row['status'] === 'Approved') {
-        $approvedEntries++;
-    }
-}
+$row = $result->fetch_assoc();
+$totalEntries = $row['total_entries'] ?? 0;
 $stmt->close();
 
 // Student diary details
@@ -272,9 +310,13 @@ $studentDiaryQuery = "
         g.name AS group_name,
         s.id AS student_id,
         s.full_name AS student_name,
-        COUNT(DISTINCT d.id) AS total_submissions,
-        SUM(CASE WHEN d.status = 'Pending' THEN 1 ELSE 0 END) AS pending_reviews,
-        SUM(CASE WHEN d.status = 'Approved' THEN 1 ELSE 0 END) AS approved_entries
+";
+if ($selectedWeek && $semesterStartDate) {
+    $studentDiaryQuery .= " COUNT(DISTINCT CASE WHEN d.entry_date BETWEEN ? AND ? THEN d.id ELSE NULL END) AS total_submissions";
+} else {
+    $studentDiaryQuery .= " COUNT(DISTINCT d.id) AS total_submissions";
+}
+$studentDiaryQuery .= "
     FROM students s
     JOIN group_members gm ON s.id = gm.student_id
     JOIN groups g ON gm.group_id = g.id
@@ -282,8 +324,17 @@ $studentDiaryQuery = "
     LEFT JOIN diary d ON s.id = d.student_id
     WHERE g.lecturer_id = ? AND g.status = 'Approved'
 ";
-$params = [$lecturerID];
-$paramTypes = "i";
+$params = [];
+$paramTypes = "";
+if ($selectedWeek && $semesterStartDate) {
+    $weekStart = (new DateTime($semesterStartDate))->modify("+ " . (($selectedWeek - 1) * 7) . " days")->format('Y-m-d');
+    $weekEnd = (new DateTime($weekStart))->modify("+6 days")->format('Y-m-d');
+    $params[] = $weekStart;
+    $params[] = $weekEnd;
+    $paramTypes .= "ss";
+}
+$params[] = $lecturerID;
+$paramTypes .= "i";
 if ($selectedSemester) {
     $studentDiaryQuery .= " AND sem.semester_name = ?";
     $params[] = $selectedSemester;
@@ -298,14 +349,6 @@ if ($selectedGroup) {
     $studentDiaryQuery .= " AND g.name = ?";
     $params[] = $selectedGroup;
     $paramTypes .= "s";
-}
-if ($selectedWeek && $semesterStartDate) {
-    $weekStart = (new DateTime($semesterStartDate))->modify("+ " . (($selectedWeek - 1) * 7) . " days")->format('Y-m-d');
-    $weekEnd = (new DateTime($weekStart))->modify("+6 days")->format('Y-m-d');
-    $studentDiaryQuery .= " AND (d.entry_date BETWEEN ? AND ? OR d.entry_date IS NULL)";
-    $params[] = $weekStart;
-    $params[] = $weekEnd;
-    $paramTypes .= "ss";
 }
 $studentDiaryQuery .= " GROUP BY s.id, s.full_name, g.name ORDER BY s.full_name";
 
@@ -328,10 +371,28 @@ $submissionStatusQuery = "
     JOIN groups g ON gm.group_id = g.id
     JOIN semesters sem ON s.intake_year = YEAR(sem.start_date) AND s.intake_month = MONTHNAME(sem.start_date)
     LEFT JOIN diary d ON s.id = d.student_id
+";
+if ($selectedWeek && $semesterStartDate) {
+    $submissionStatusQuery = str_replace(
+        "LEFT JOIN diary d ON s.id = d.student_id",
+        "LEFT JOIN diary d ON s.id = d.student_id AND d.entry_date BETWEEN ? AND ?",
+        $submissionStatusQuery
+    );
+}
+$submissionStatusQuery .= "
     WHERE g.lecturer_id = ? AND g.status = 'Approved'
 ";
-$params = [$lecturerID];
-$paramTypes = "i";
+$params = [];
+$paramTypes = "";
+if ($selectedWeek && $semesterStartDate) {
+    $weekStart = (new DateTime($semesterStartDate))->modify("+ " . (($selectedWeek - 1) * 7) . " days")->format('Y-m-d');
+    $weekEnd = (new DateTime($weekStart))->modify("+6 days")->format('Y-m-d');
+    $params[] = $weekStart;
+    $params[] = $weekEnd;
+    $paramTypes .= "ss";
+}
+$params[] = $lecturerID;
+$paramTypes .= "i";
 if ($selectedSemester) {
     $submissionStatusQuery .= " AND sem.semester_name = ?";
     $params[] = $selectedSemester;
@@ -346,14 +407,6 @@ if ($selectedGroup) {
     $submissionStatusQuery .= " AND g.name = ?";
     $params[] = $selectedGroup;
     $paramTypes .= "s";
-}
-if ($selectedWeek && $semesterStartDate) {
-    $weekStart = (new DateTime($semesterStartDate))->modify("+ " . (($selectedWeek - 1) * 7) . " days")->format('Y-m-d');
-    $weekEnd = (new DateTime($weekStart))->modify("+6 days")->format('Y-m-d');
-    $submissionStatusQuery .= " AND (d.entry_date BETWEEN ? AND ? OR d.entry_date IS NULL)";
-    $params[] = $weekStart;
-    $params[] = $weekEnd;
-    $paramTypes .= "ss";
 }
 $submissionStatusQuery .= " ORDER BY s.id, d.entry_date";
 
@@ -464,7 +517,6 @@ $conn->close();
                         <h6 class="collapse-header">Guidance Resources:</h6>
                         <a class="collapse-item <?= !$isSupervisor ? 'disabled' : '' ?>" href="lectmanagemeetings.php">Manage Meetings</a>
                         <a class="collapse-item active <?= !$isSupervisor ? 'disabled' : '' ?>" href="lectviewdiary.php">View Student Diary</a>
-                        <?php /* <a class="collapse-item <?= !$isSupervisor ? 'disabled' : '' ?>" href="lectevaluatestudent.php">Evaluate Students</a> */ ?>
                         <a class="collapse-item <?= !$isSupervisor ? 'disabled' : '' ?>" href="lectviewstudentdetails.php">View Student Details</a>
                     </div>
                 </div>
@@ -481,7 +533,6 @@ $conn->close();
                 <div id="collapsePages" class="collapse" aria-labelledby="headingPages" data-parent="#accordionSidebar">
                     <div class="bg-white py-2 collapse-inner rounded">
                         <h6 class="collapse-header">Performance Review:</h6>
-                        <?php /* <a class="collapse-item <?= !$isAssessor ? 'disabled' : '' ?>" href="assevaluatestudent.php">Evaluate Students</a> */ ?>
                         <a class="collapse-item <?= !$isAssessor ? 'disabled' : '' ?>" href="assviewstudentdetails.php">View Student Details</a>
                         <div class="collapse-divider"></div>
                         <h6 class="collapse-header">Component Analysis:</h6>
@@ -557,15 +608,15 @@ $conn->close();
                             </div>
                         </div>
                         <div class="col-xl-4 col-md-4 mb-4">
-                            <div class="card border-left-warning shadow h-100 py-2">
+                            <div class="card border-left-info shadow h-100 py-2">
                                 <div class="card-body">
                                     <div class="row no-gutters align-items-center">
                                         <div class="col mr-2">
-                                            <div class="text-xs font-weight-bold text-warning text-uppercase mb-1">Pending Reviews</div>
-                                            <div class="h5 mb-0 font-weight-bold text-gray-800"><?php echo htmlspecialchars($pendingReviews); ?> Pending</div>
+                                            <div class="text-xs font-weight-bold text-info text-uppercase mb-1">Total Students</div>
+                                            <div class="h5 mb-0 font-weight-bold text-gray-800"><?php echo htmlspecialchars($totalStudents); ?> Students</div>
                                         </div>
                                         <div class="col-auto">
-                                            <i class="fas fa-hourglass-half fa-2x text-gray-300"></i>
+                                            <i class="fas fa-users fa-2x text-gray-300"></i>
                                         </div>
                                     </div>
                                 </div>
@@ -576,11 +627,11 @@ $conn->close();
                                 <div class="card-body">
                                     <div class="row no-gutters align-items-center">
                                         <div class="col mr-2">
-                                            <div class="text-xs font-weight-bold text-success text-uppercase mb-1">Approved Entries</div>
-                                            <div class="h5 mb-0 font-weight-bold text-gray-800"><?php echo htmlspecialchars($approvedEntries); ?> Approved</div>
+                                            <div class="text-xs font-weight-bold text-success text-uppercase mb-1">Current Week</div>
+                                            <div class="h5 mb-0 font-weight-bold text-gray-800">Week <?php echo htmlspecialchars($currentWeek); ?></div>
                                         </div>
                                         <div class="col-auto">
-                                            <i class="fas fa-check-circle fa-2x text-gray-300"></i>
+                                            <i class="fas fa-calendar-week fa-2x text-gray-300"></i>
                                         </div>
                                     </div>
                                 </div>
@@ -654,7 +705,8 @@ $conn->close();
                         <div class="alert alert-warning">No active semester defined. Please select a semester.</div>
                     <?php endif; ?>
 
-                    <!-- Student Diary Details -->
+                    <!-- Student Diary Details (only shown when no specific week is selected) -->
+                    <?php if ($selectedWeek == 0): ?>
                     <div class="row">
                         <div class="col-lg-12">
                             <div class="card shadow mb-4">
@@ -669,8 +721,6 @@ $conn->close();
                                                     <th>Group</th>
                                                     <th>Student Name</th>
                                                     <th>Total Entries</th>
-                                                    <th>Pending</th>
-                                                    <th>Approved</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
@@ -679,8 +729,6 @@ $conn->close();
                                                         <td><?php echo htmlspecialchars($detail['group_name'] ?? 'N/A'); ?></td>
                                                         <td><?php echo htmlspecialchars($detail['student_name'] ?? 'N/A'); ?></td>
                                                         <td><?php echo htmlspecialchars($detail['total_submissions'] ?? '0'); ?></td>
-                                                        <td><?php echo htmlspecialchars($detail['pending_reviews'] ?? '0'); ?></td>
-                                                        <td><?php echo htmlspecialchars($detail['approved_entries'] ?? '0'); ?></td>
                                                     </tr>
                                                 <?php endforeach; ?>
                                             </tbody>
@@ -690,6 +738,7 @@ $conn->close();
                             </div>
                         </div>
                     </div>
+                    <?php endif; ?>
 
                     <!-- Submission Status by Week -->
                     <div class="row">
@@ -880,10 +929,6 @@ $conn->close();
                                         <tr>
                                             <th scope="row" style="background-color: #f8f9fa;">Content</th>
                                             <td>${response.content ? response.content : 'No content'}</td>
-                                        </tr>
-                                        <tr>
-                                            <th scope="row" style="background-color: #f8f9fa;">Status</th>
-                                            <td>${response.status ? response.status : 'N/A'}</td>
                                         </tr>
                                     </tbody>
                                 </table>
