@@ -293,7 +293,7 @@ $groupRequestsQuery = "
     SELECT g.id AS group_id, g.name AS group_name, p.title AS proposed_title, 
            p.description AS proposed_description, 'Group Creation' AS request_type 
     FROM groups g LEFT JOIN projects p ON g.id = p.group_id 
-    WHERE g.lecturer_id = ? AND (g.status = 'Pending' OR g.status = '' OR g.status IS NULL)";
+    WHERE g.lecturer_id = ? AND (g.status = 'Pending' OR status = '' OR status IS NULL)";
 $stmt = $conn->prepare($groupRequestsQuery);
 $stmt->bind_param("i", $lecturerID);
 $stmt->execute();
@@ -315,7 +315,7 @@ $titleRequestsResult = $stmt->get_result();
 $titleRequests = $titleRequestsResult->fetch_all(MYSQLI_ASSOC);
 $stmt->close();
 
-// Combine Group Creation and Initial Title Requests
+// Combine Group Creation and Hawkins and Initial Title Requests
 $initialSetupRequests = array_merge($groupRequests, $titleRequests);
 
 // Change Title Requests
@@ -335,56 +335,67 @@ if ($stmt) {
     $changeTitleRequests = [];
 }
 
-// Student Details (only approved groups) with filters
-$studentDetailsQuery = "
-    SELECT s.username AS student_username, s.full_name AS student_name, g.name AS group_name, 
-           p.title AS project_title, p.description AS project_description, 
-           CONCAT(s.intake_month, ' ', s.intake_year) AS semester 
-    FROM students s 
-    JOIN group_members gm ON s.id = gm.student_id 
-    JOIN groups g ON gm.group_id = g.id 
+// Group Details (only approved groups) with filters
+$groupDetailsQuery = "
+    SELECT g.name AS group_name, 
+           p.title AS project_title, 
+           p.description AS project_description, 
+           CONCAT(s.intake_month, ' ', s.intake_year) AS semester,
+           GROUP_CONCAT(
+               CASE 
+                   WHEN s.id = g.leader_id THEN CONCAT('<span style=\"color:red;\">(L) ', s.full_name, '</span>')
+                   ELSE s.full_name 
+               END 
+               ORDER BY s.id = g.leader_id DESC, s.full_name
+               SEPARATOR ', '
+           ) AS group_members
+    FROM groups g 
     JOIN projects p ON g.id = p.group_id 
+    JOIN group_members gm ON g.id = gm.group_id 
+    JOIN students s ON gm.student_id = s.id 
     WHERE g.lecturer_id = ? AND g.status = 'Approved'";
 $params = [$lecturerID];
 $paramTypes = "i";
 
 if ($searchUsername) {
-    $studentDetailsQuery .= " AND s.username LIKE ?";
+    $groupDetailsQuery .= " AND s.username LIKE ?";
     $params[] = "%$searchUsername%";
     $paramTypes .= "s";
 }
 if ($selectedGroup) {
-    $studentDetailsQuery .= " AND g.name = ?";
+    $groupDetailsQuery .= " AND g.name = ?";
     $params[] = $selectedGroup;
     $paramTypes .= "s";
 }
 if ($selectedSemester) {
     // Match the month part of semester_name (e.g., 'June' from 'June 2025')
-    $studentDetailsQuery .= " AND s.intake_month = SUBSTRING_INDEX(?, ' ', 1)";
+    $groupDetailsQuery .= " AND s.intake_month = SUBSTRING_INDEX(?, ' ', 1)";
     $params[] = $selectedSemester;
     $paramTypes .= "s";
 }
 
+$groupDetailsQuery .= " GROUP BY g.id, p.title, p.description, s.intake_month, s.intake_year";
+
 // Log the query and parameters for debugging
-error_log("Student Details Query: $studentDetailsQuery");
+error_log("Group Details Query: $groupDetailsQuery");
 error_log("Parameters: " . json_encode($params));
 
-$stmt = $conn->prepare($studentDetailsQuery);
+$stmt = $conn->prepare($groupDetailsQuery);
 if (!$stmt) {
-    error_log("Student Details query preparation failed: " . $conn->error);
-    die("Prepare failed (Student Details): " . $conn->error);
+    error_log("Group Details query preparation failed: " . $conn->error);
+    die("Prepare failed (Group Details): " . $conn->error);
 }
 $stmt->bind_param($paramTypes, ...$params);
 if (!$stmt->execute()) {
-    error_log("Student Details query execution failed: " . $stmt->error);
-    die("Execute failed (Student Details): " . $stmt->error);
+    error_log("Group Details query execution failed: " . $stmt->error);
+    die("Execute failed (Group Details): " . $stmt->error);
 }
-$studentDetailsResult = $stmt->get_result();
-$studentDetails = $studentDetailsResult->fetch_all(MYSQLI_ASSOC);
+$groupDetailsResult = $stmt->get_result();
+$groupDetails = $groupDetailsResult->fetch_all(MYSQLI_ASSOC);
 $stmt->close();
 
 // Debug: Log the number of rows returned
-error_log("Student Details Query returned " . count($studentDetails) . " rows for lecturer ID " . $lecturerID);
+error_log("Group Details Query returned " . count($groupDetails) . " rows for lecturer ID " . $lecturerID);
 
 $conn->close();
 
@@ -474,7 +485,6 @@ $current_page = basename($_SERVER['PHP_SELF']);
                         <h6 class="collapse-header">Guidance Resources:</h6>
                         <a class="collapse-item <?= !$isSupervisor ? 'disabled' : '' ?>" href="lectmanagemeetings.php">Manage Meetings</a>
                         <a class="collapse-item <?= !$isSupervisor ? 'disabled' : '' ?>" href="lectviewdiary.php">View Student Diary</a>
-                        <?php /* <a class="collapse-item <?= !$isSupervisor ? 'disabled' : '' ?>" href="lectevaluatestudent.php">Evaluate Students</a> */ ?>
                         <a class="collapse-item <?= !$isSupervisor ? 'disabled' : '' ?>" href="lectviewstudentdetails.php">View Student Details</a>
                     </div>
                 </div>
@@ -491,7 +501,6 @@ $current_page = basename($_SERVER['PHP_SELF']);
                 <div id="collapsePages" class="collapse" aria-labelledby="headingPages" data-parent="#accordionSidebar">
                     <div class="bg-white py-2 collapse-inner rounded">
                         <h6 class="collapse-header">Performance Review:</h6>
-                        <?php /* <a class="collapse-item <?= !$isAssessor ? 'disabled' : '' ?>" href="assevaluatestudent.php">Evaluate Students</a> */ ?>
                         <a class="collapse-item <?= !$isAssessor ? 'disabled' : '' ?>" href="assviewstudentdetails.php">View Student Details</a>
                         <div class="collapse-divider"></div>
                         <h6 class="collapse-header">Component Analysis:</h6>
@@ -583,7 +592,7 @@ $current_page = basename($_SERVER['PHP_SELF']);
                     <!-- Filter Card -->
                     <div class="card shadow mb-4">
                         <div class="card-header py-3">
-                            <h6 class="m-0 font-weight-bold text-primary">Filter Student Details</h6>
+                            <h6 class="m-0 font-weight-bold text-primary">Filter Group Details</h6>
                         </div>
                         <div class="card-body">
                             <form method="GET" action="">
@@ -626,39 +635,37 @@ $current_page = basename($_SERVER['PHP_SELF']);
                         </div>
                     </div>
 
-                    <!-- Student Details Card -->
+                    <!-- Group Details Card -->
                     <div class="card shadow mb-4">
                         <div class="card-header py-3">
-                            <h6 class="m-0 font-weight-bold text-primary">Student Details</h6>
+                            <h6 class="m-0 font-weight-bold text-primary">Group Details</h6>
                         </div>
                         <div class="card-body">
                             <div class="table-responsive">
                                 <table class="table table-bordered" id="dataTable" width="100%" cellspacing="0">
                                     <thead>
                                         <tr>
-                                            <th>Username</th>
-                                            <th>Name</th>
                                             <th>Group Name</th>
                                             <th>Semester</th>
                                             <th>Project Title</th>
                                             <th>Project Description</th>
+                                            <th>Group Members</th>
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        <?php if (!empty($studentDetails)) { ?>
-                                            <?php foreach ($studentDetails as $row): ?>
+                                        <?php if (!empty($groupDetails)) { ?>
+                                            <?php foreach ($groupDetails as $row): ?>
                                                 <tr>
-                                                    <td><?php echo htmlspecialchars($row['student_username']); ?></td>
-                                                    <td><?php echo htmlspecialchars($row['student_name']); ?></td>
                                                     <td><?php echo htmlspecialchars($row['group_name']); ?></td>
                                                     <td><?php echo htmlspecialchars($row['semester'] ?? 'N/A'); ?></td>
                                                     <td><?php echo htmlspecialchars($row['project_title'] ?? 'N/A'); ?></td>
                                                     <td><?php echo htmlspecialchars($row['project_description'] ?? 'N/A'); ?></td>
+                                                    <td><?php echo $row['group_members'] ?? 'N/A'; ?></td>
                                                 </tr>
                                             <?php endforeach; ?>
                                         <?php } else { ?>
                                             <tr>
-                                                <td colspan="6" class="text-center">No student details available for your approved groups.</td>
+                                                <td colspan="5" class="text-center">No group details available for your approved groups.</td>
                                             </tr>
                                         <?php } ?>
                                     </tbody>
