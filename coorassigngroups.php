@@ -2,6 +2,44 @@
 session_start();
 include 'connection.php';
 
+// Handle AJAX request for group details
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'fetch_group_details') {
+    header('Content-Type: application/json');
+    $group_name = trim($_POST['group_name'] ?? '');
+    $response = ['success' => false, 'group' => null];
+
+    if (!empty($group_name)) {
+        $stmt = $conn->prepare("
+            SELECT g.name, GROUP_CONCAT(s.full_name SEPARATOR ', ') AS members
+            FROM groups g
+            LEFT JOIN group_members gm ON g.id = gm.group_id
+            LEFT JOIN students s ON gm.student_id = s.id
+            WHERE g.name = ?
+            GROUP BY g.id, g.name
+        ");
+        if ($stmt) {
+            $stmt->bind_param("s", $group_name);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            if ($row = $result->fetch_assoc()) {
+                $response['success'] = true;
+                $response['group'] = [
+                    'name' => $row['name'],
+                    'members' => $row['members'] ?? 'None'
+                ];
+            }
+            $stmt->close();
+        } else {
+            $response['error'] = "Prepare failed: " . $conn->error;
+        }
+    } else {
+        $response['error'] = 'Invalid group name';
+    }
+
+    echo json_encode($response);
+    exit();
+}
+
 // Ensure the coordinator is logged in
 if (!isset($_SESSION['user_id'])) {
     header("Location: index.html");
@@ -819,7 +857,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_group'])) {
                     }
                 });
 
-                // Enforce prefix in group number input in modal
+                // Enforce prefix in group number input in modal and fetch group details
                 $('#assignGroupModal').on('shown.bs.modal', function () {
                     const prefix = '<?php echo htmlspecialchars($groupPrefix); ?>';
                     const groupInput = $('#group_number');
@@ -839,9 +877,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_group'])) {
                         if (groupNumber.length > 0) {
                             const groupName = prefix + groupNumber.padStart(3, '0');
                             $.ajax({
-                                url: 'fetch_group_details.php',
+                                url: '<?php echo $_SERVER['PHP_SELF']; ?>',
                                 method: 'POST',
-                                data: { group_name: groupName },
+                                data: { action: 'fetch_group_details', group_name: groupName },
                                 dataType: 'json',
                                 success: function(response) {
                                     if (response.success && response.group) {
