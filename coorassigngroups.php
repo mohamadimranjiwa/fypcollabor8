@@ -14,43 +14,6 @@ if (!$conn) {
     die("Database connection failed: " . mysqli_connect_error());
 }
 
-// Handle AJAX request for group details
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'fetch_group_details') {
-    header('Content-Type: application/json');
-    $response = ['success' => false, 'group' => null];
-
-    if (isset($_POST['group_name'])) {
-        $group_name = trim($_POST['group_name']);
-        $stmt = $conn->prepare("
-            SELECT g.name, GROUP_CONCAT(s.full_name SEPARATOR ', ') AS members
-            FROM groups g
-            LEFT JOIN group_members gm ON g.id = gm.group_id
-            LEFT JOIN students s ON gm.student_id = s.id
-            WHERE g.name = ?
-            GROUP BY g.id, g.name
-        ");
-        if ($stmt) {
-            $stmt->bind_param("s", $group_name);
-            $stmt->execute();
-            $result = $stmt->get_result();
-            if ($row = $result->fetch_assoc()) {
-                $response['success'] = true;
-                $response['group'] = [
-                    'name' => $row['name'],
-                    'members' => $row['members'] ?? 'None'
-                ];
-            }
-            $stmt->close();
-        } else {
-            $response['error'] = "Prepare failed: " . $conn->error;
-        }
-    } else {
-        $response['error'] = 'Invalid request';
-    }
-    echo json_encode($response);
-    exit();
-}
-
 // Fetch the coordinator's details
 $sql = "SELECT full_name, profile_picture FROM coordinators WHERE id = ?";
 $stmt = $conn->prepare($sql);
@@ -196,8 +159,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['assign_group'])) {
     }
     $group_number = preg_replace('/[^0-9]/', '', $group_number);
 
-    if (empty($group_number) || $group_number == '0') {
-        $message = "<div class='alert alert-danger'>Invalid group number. Please enter a number between 001 and 999.</div>";
+    if (empty($group_number)) {
+        $message = "<div class='alert alert-danger'>Group number is required.</div>";
     } else {
         $group_name = $groupPrefix . str_pad($group_number, 3, '0', STR_PAD_LEFT);
 
@@ -856,7 +819,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_group'])) {
                     }
                 });
 
-                // Group number input handling
+                // Enforce prefix in group number input in modal
                 $('#assignGroupModal').on('shown.bs.modal', function () {
                     const prefix = '<?php echo htmlspecialchars($groupPrefix); ?>';
                     const groupInput = $('#group_number');
@@ -865,31 +828,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_group'])) {
                     $('#group-details').html('');
 
                     groupInput.on('input', function() {
-                        let value = this.value.replace(/[^0-9]/g, ''); // Keep only digits
-                        // Remove leading zeros and ensure valid number
-                        value = value.replace(/^0+/, '') || '0'; // Convert empty to '0'
-                        const num = parseInt(value, 10);
-
-                        if (value === '0' || num < 1 || num > 999) {
-                            // Invalid input (0 or out of range)
-                            this.value = '';
-                            $('#group-details').html('<p class="text-danger">Please enter a number between 001 and 999.</p>');
-                            return;
+                        let value = this.value;
+                        if (value && !value.startsWith(prefix)) {
+                            value = prefix + value.replace(/[^0-9]/g, '');
+                            this.value = value;
                         }
 
-                        // Pad to three digits
-                        value = prefix + value.padStart(3, '0');
-                        this.value = value;
-
                         // Fetch group details via AJAX
-                        if (value.length === prefix.length + 3) {
+                        const groupNumber = value.replace(prefix, '').replace(/[^0-9]/g, '');
+                        if (groupNumber.length > 0) {
+                            const groupName = prefix + groupNumber.padStart(3, '0');
                             $.ajax({
-                                url: 'coorassignlecturers.php',
+                                url: 'fetch_group_details.php',
                                 method: 'POST',
-                                data: { 
-                                    action: 'fetch_group_details',
-                                    group_name: value 
-                                },
+                                data: { group_name: groupName },
                                 dataType: 'json',
                                 success: function(response) {
                                     if (response.success && response.group) {
@@ -901,8 +853,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_group'])) {
                                         $('#group-details').html('<p class="text-danger">Group not found.</p>');
                                     }
                                 },
-                                error: function(xhr, status, error) {
-                                    console.error('AJAX Error:', status, error);
+                                error: function() {
                                     $('#group-details').html('<p class="text-danger">Error fetching group details.</p>');
                                 }
                             });
