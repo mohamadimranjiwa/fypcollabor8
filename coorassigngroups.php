@@ -7,7 +7,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     header('Content-Type: application/json');
     $group_name = trim($_POST['group_name'] ?? '');
     $response = ['success' => false, 'group' => null];
-
     if (!empty($group_name)) {
         $stmt = $conn->prepare("
             SELECT g.name, GROUP_CONCAT(s.full_name SEPARATOR ', ') AS members
@@ -35,7 +34,89 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     } else {
         $response['error'] = 'Invalid group name';
     }
+    echo json_encode($response);
+    exit();
+}
 
+// Handle AJAX request for group members
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'fetch_group_members') {
+    header('Content-Type: application/json');
+    $group_id = intval($_POST['group_id'] ?? 0);
+    $response = ['success' => false, 'members' => []];
+    if ($group_id > 0) {
+        $stmt = $conn->prepare("
+            SELECT s.id, s.full_name, g.leader_id
+            FROM group_members gm
+            JOIN students s ON gm.student_id = s.id
+            JOIN groups g ON gm.group_id = g.id
+            WHERE gm.group_id = ?
+            ORDER BY s.full_name
+        ");
+        if ($stmt) {
+            $stmt->bind_param("i", $group_id);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            while ($row = $result->fetch_assoc()) {
+                $response['members'][] = [
+                    'id' => $row['id'],
+                    'full_name' => $row['full_name'],
+                    'is_leader' => $row['id'] == $row['leader_id']
+                ];
+            }
+            $response['success'] = true;
+            $stmt->close();
+        } else {
+            $response['error'] = "Prepare failed: " . $conn->error;
+        }
+    } else {
+        $response['error'] = 'Invalid group ID';
+    }
+    echo json_encode($response);
+    exit();
+}
+
+// Handle AJAX request to set group leader
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'set_group_leader') {
+    header('Content-Type: application/json');
+    $group_id = intval($_POST['group_id'] ?? 0);
+    $leader_id = intval($_POST['leader_id'] ?? 0);
+    $response = ['success' => false, 'message' => ''];
+    
+    if ($group_id <= 0 || $leader_id <= 0) {
+        $response['message'] = 'Invalid group or leader ID';
+        echo json_encode($response);
+        exit();
+    }
+
+    $conn->begin_transaction();
+    try {
+        // Verify the selected leader is a member of the group
+        $checkStmt = $conn->prepare("SELECT COUNT(*) as count FROM group_members WHERE group_id = ? AND student_id = ?");
+        $checkStmt->bind_param("ii", $group_id, $leader_id);
+        $checkStmt->execute();
+        $checkResult = $checkStmt->get_result();
+        $checkRow = $checkResult->fetch_assoc();
+        $checkStmt->close();
+
+        if ($checkRow['count'] == 0) {
+            throw new Exception("Selected student is not a member of this group");
+        }
+
+        // Update the leader
+        $updateStmt = $conn->prepare("UPDATE groups SET leader_id = ? WHERE id = ?");
+        $updateStmt->bind_param("ii", $leader_id, $group_id);
+        if (!$updateStmt->execute()) {
+            throw new Exception("Failed to set group leader: " . $updateStmt->error);
+        }
+        $updateStmt->close();
+
+        $conn->commit();
+        $response['success'] = true;
+        $response['message'] = 'Group leader updated successfully';
+    } catch (Exception $e) {
+        $conn->rollback();
+        $response['message'] = $e->getMessage();
+    }
     echo json_encode($response);
     exit();
 }
@@ -46,52 +127,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     $group_id = intval($_POST['group_id'] ?? 0);
     $student_id = intval($_POST['student_id'] ?? 0);
     $response = ['success' => false, 'message' => ''];
-
     if ($group_id <= 0 || $student_id <= 0) {
         $response['message'] = 'Invalid group or student ID';
         echo json_encode($response);
         exit();
     }
-
     $conn->begin_transaction();
     try {
-        // Check if the student is in the group
         $checkStmt = $conn->prepare("SELECT COUNT(*) as count FROM group_members WHERE group_id = ? AND student_id = ?");
         $checkStmt->bind_param("ii", $group_id, $student_id);
         $checkStmt->execute();
         $checkResult = $checkStmt->get_result();
         $checkRow = $checkResult->fetch_assoc();
         $checkStmt->close();
-
         if ($checkRow['count'] == 0) {
             throw new Exception("Student is not a member of this group");
         }
-
-        // Remove the student from the group
         $deleteStmt = $conn->prepare("DELETE FROM group_members WHERE group_id = ? AND student_id = ?");
         $deleteStmt->bind_param("ii", $group_id, $student_id);
         if (!$deleteStmt->execute()) {
             throw new Exception("Failed to remove student: " . $deleteStmt->error);
         }
         $deleteStmt->close();
-
-        // Check if the removed student was the leader
         $leaderStmt = $conn->prepare("SELECT leader_id FROM groups WHERE id = ?");
         $leaderStmt->bind_param("i", $group_id);
         $leaderStmt->execute();
         $leaderResult = $leaderStmt->get_result();
         $leaderRow = $leaderResult->fetch_assoc();
         $leaderStmt->close();
-
         if ($leaderRow['leader_id'] == $student_id) {
-            // Find another member to set as leader, or set to NULL if none remain
             $newLeaderStmt = $conn->prepare("SELECT student_id FROM group_members WHERE group_id = ? LIMIT 1");
             $newLeaderStmt->bind_param("i", $group_id);
             $newLeaderStmt->execute();
             $newLeaderResult = $newLeaderStmt->get_result();
             $newLeaderRow = $newLeaderResult->fetch_assoc();
             $newLeaderStmt->close();
-
             $new_leader_id = $newLeaderRow ? $newLeaderRow['student_id'] : null;
             $updateLeaderStmt = $conn->prepare("UPDATE groups SET leader_id = ? WHERE id = ?");
             $updateLeaderStmt->bind_param("ii", $new_leader_id, $group_id);
@@ -100,12 +170,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             }
             $updateLeaderStmt->close();
         }
-
         $conn->commit();
         $response['success'] = true;
         $response['message'] = 'Student removed successfully';
-
-        // Fetch updated group details for response
         $groupStmt = $conn->prepare("
             SELECT g.name, COUNT(gm.student_id) as student_count, GROUP_CONCAT(s.full_name SEPARATOR ', ') as group_members
             FROM groups g
@@ -119,21 +186,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         $groupResult = $groupStmt->get_result();
         $groupRow = $groupResult->fetch_assoc();
         $groupStmt->close();
-
         $response['group'] = [
             'name' => $groupRow['name'],
             'student_count' => $groupRow['student_count'],
             'group_members' => $groupRow['group_members'] ?? 'None'
         ];
-
-        // Fetch student details for unassigned students table
         $studentStmt = $conn->prepare("SELECT full_name, email FROM students WHERE id = ?");
         $studentStmt->bind_param("i", $student_id);
         $studentStmt->execute();
         $studentResult = $studentStmt->get_result();
         $studentRow = $studentResult->fetch_assoc();
         $studentStmt->close();
-
         $response['student'] = [
             'id' => $student_id,
             'full_name' => $studentRow['full_name'],
@@ -143,7 +206,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         $conn->rollback();
         $response['message'] = $e->getMessage();
     }
-
     echo json_encode($response);
     exit();
 }
@@ -171,11 +233,9 @@ $stmt->execute();
 $result = $stmt->get_result();
 $coordinator = $result->fetch_assoc();
 $stmt->close();
-
 if (!$coordinator) {
     die("Error: No coordinator found with the provided ID.");
 }
-
 $personalInfo = [
     'full_name' => $coordinator['full_name'] ?? 'N/A',
     'profile_picture' => $coordinator['profile_picture'] ?? 'img/undraw_profile.svg',
@@ -206,7 +266,6 @@ if (!$currentSemester) {
     $monthName = $semesterStartDate->format('F');
     $groupPrefix = $year . $monthName;
     $pattern = $groupPrefix . "%";
-
     $stmtPattern = $conn->prepare("SELECT COUNT(*) as count FROM groups WHERE name LIKE ?");
     if (!$stmtPattern) {
         die("Prepare failed (group count query): " . $conn->error);
@@ -226,7 +285,7 @@ $supervisorsQuery = "SELECT id, full_name FROM lecturers WHERE role_id IN (3, 4)
 $supervisorsResult = $conn->query($supervisorsQuery) or die("Error in supervisors query: " . $conn->error);
 $supervisors = $supervisorsResult->fetch_all(MYSQLI_ASSOC);
 
-// Fetch students who are not assigned to any group
+// Fetch unassigned students
 $unassignedStudentsQuery = "
     SELECT s.id, s.full_name, s.email
     FROM students s
@@ -249,7 +308,7 @@ $allGroups = $allGroupsResult->fetch_all(MYSQLI_ASSOC);
 
 // Fetch group members for the manage members modal
 $groupMembersQuery = "
-    SELECT g.id AS group_id, g.name AS group_name, s.id AS student_id, s.full_name AS student_name
+    SELECT g.id AS group_id, g.name AS group_name, s.id AS student_id, s.full_name AS student_name, g.leader_id
     FROM groups g
     LEFT JOIN group_members gm ON g.id = gm.group_id
     LEFT JOIN students s ON gm.student_id = s.id
@@ -260,7 +319,8 @@ $groupMembers = [];
 while ($row = $groupMembersResult->fetch_assoc()) {
     $groupMembers[$row['group_id']][] = [
         'student_id' => $row['student_id'],
-        'student_name' => $row['student_name']
+        'student_name' => $row['student_name'],
+        'is_leader' => $row['student_id'] == $row['leader_id']
     ];
 }
 
@@ -274,27 +334,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_group'])) {
         if ($lecturer_id <= 0) {
             $message = "<div class='alert alert-danger'>Invalid supervisor selected.</div>";
         } else {
-            $sql = "INSERT INTO groups (name, status, coordinator_id, lecturer_id) VALUES (?, 'Pending', ?, ?)";
-            $stmt = $conn->prepare($sql);
-            if (!$stmt) {
-                $message = "<div class='alert alert-danger'>Prepare failed: " . $conn->error . "</div>";
-            } else {
+            $conn->begin_transaction();
+            try {
+                $sql = "INSERT INTO groups (name, status, coordinator_id, lecturer_id, leader_id) VALUES (?, 'Pending', ?, ?, NULL)";
+                $stmt = $conn->prepare($sql);
+                if (!$stmt) {
+                    throw new Exception("Prepare failed: " . $conn->error);
+                }
                 $stmt->bind_param("sii", $group_name, $coordinatorID, $lecturer_id);
                 if ($stmt->execute()) {
                     $group_id = $stmt->insert_id;
-                    // Create a project row for the group
+                    // Create a project row
                     $insertProjectStmt = $conn->prepare("INSERT INTO projects (group_id, title, description) VALUES (?, '', '')");
-                    if ($insertProjectStmt) {
-                        $insertProjectStmt->bind_param("i", $group_id);
-                        $insertProjectStmt->execute();
-                        $insertProjectStmt->close();
-                    }
+                    $insertProjectStmt->bind_param("i", $group_id);
+                    $insertProjectStmt->execute();
+                    $insertProjectStmt->close();
+                    $conn->commit();
                     $message = "<div class='alert alert-success'>Group '$group_name' created successfully! Awaiting supervisor approval.</div>";
                     header("Refresh:0");
                 } else {
-                    $message = "<div class='alert alert-danger'>Failed to create group: " . $stmt->error . "</div>";
+                    throw new Exception("Failed to create group: " . $stmt->error);
                 }
                 $stmt->close();
+            } catch (Exception $e) {
+                $conn->rollback();
+                $message = "<div class='alert alert-danger'>" . $e->getMessage() . "</div>";
             }
         }
     }
@@ -304,17 +368,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_group'])) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['assign_group'])) {
     $student_id = intval($_POST['student_id']);
     $group_number = trim($_POST['group_number']);
-
     if (strpos($group_number, $groupPrefix) === 0) {
         $group_number = substr($group_number, strlen($groupPrefix));
     }
     $group_number = preg_replace('/[^0-9]/', '', $group_number);
-
     if (empty($group_number)) {
         $message = "<div class='alert alert-danger'>Group number is required.</div>";
     } else {
         $group_name = $groupPrefix . str_pad($group_number, 3, '0', STR_PAD_LEFT);
-
         $stmt = $conn->prepare("SELECT id FROM groups WHERE name = ?");
         $stmt->bind_param("s", $group_name);
         $stmt->execute();
@@ -323,82 +384,86 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['assign_group'])) {
             $message = "<div class='alert alert-danger'>Group not found: $group_name</div>";
         } else {
             $group_id = $result->fetch_assoc()['id'];
+            $conn->begin_transaction();
+            try {
+                // Check if student is already in a group
+                $checkStmt = $conn->prepare("SELECT COUNT(*) as count FROM group_members WHERE student_id = ?");
+                $checkStmt->bind_param("i", $student_id);
+                $checkStmt->execute();
+                $checkResult = $checkStmt->get_result();
+                $checkRow = $checkResult->fetch_assoc();
+                $checkStmt->close();
+                if ($checkRow['count'] > 0) {
+                    throw new Exception("Student is already assigned to a group.");
+                }
 
-            $checkStmt = $conn->prepare("SELECT COUNT(*) as count FROM group_members WHERE student_id = ?");
-            $checkStmt->bind_param("i", $student_id);
-            $checkStmt->execute();
-            $checkResult = $checkStmt->get_result();
-            $checkRow = $checkResult->fetch_assoc();
-            $checkStmt->close();
+                // Check group member count
+                $groupCheckStmt = $conn->prepare("SELECT COUNT(*) as count FROM group_members WHERE group_id = ?");
+                $groupCheckStmt->bind_param("i", $group_id);
+                $groupCheckStmt->execute();
+                $groupCheckResult = $groupCheckStmt->get_result();
+                $groupCheckRow = $groupCheckResult->fetch_assoc();
+                $groupCheckStmt->close();
+                if ($groupCheckRow['count'] >= 4) {
+                    throw new Exception("Selected group already has 4 students.");
+                }
 
-            $groupCheckStmt = $conn->prepare("SELECT COUNT(*) as count FROM group_members WHERE group_id = ?");
-            $groupCheckStmt->bind_param("i", $group_id);
-            $groupCheckStmt->execute();
-            $groupCheckResult = $groupCheckStmt->get_result();
-            $groupCheckRow = $groupCheckResult->fetch_assoc();
-            $groupCheckStmt->close();
+                // Check if group has no members (to set first student as leader)
+                $isFirstMember = $groupCheckRow['count'] == 0;
 
-            if ($checkRow['count'] > 0) {
-                $message = "<div class='alert alert-danger'>Student is already assigned to a group.</div>";
-            } elseif ($groupCheckRow['count'] >= 4) {
-                $message = "<div class='alert alert-danger'>Selected group already has 4 students.</div>";
-            } else {
+                // Assign student to group
                 $sql = "INSERT INTO group_members (group_id, student_id) VALUES (?, ?)";
                 $stmt = $conn->prepare($sql);
                 $stmt->bind_param("ii", $group_id, $student_id);
-                if ($stmt->execute()) {
-                    $message = "<div class='alert alert-success'>Student assigned to group successfully!</div>";
-                    // Set as leader if no leader exists
-                    $leaderCheckStmt = $conn->prepare("SELECT leader_id FROM groups WHERE id = ?");
-                    $leaderCheckStmt->bind_param("i", $group_id);
-                    $leaderCheckStmt->execute();
-                    $leaderCheckResult = $leaderCheckStmt->get_result();
-                    $leaderRow = $leaderCheckResult->fetch_assoc();
-                    $leaderCheckStmt->close();
-
-                    if ($leaderRow && (empty($leaderRow['leader_id']) || $leaderRow['leader_id'] == 0)) {
-                        $setLeaderStmt = $conn->prepare("UPDATE groups SET leader_id = ? WHERE id = ?");
-                        $setLeaderStmt->bind_param("ii", $student_id, $group_id);
-                        $setLeaderStmt->execute();
-                        $setLeaderStmt->close();
-                    }
-                    // Ensure a project row exists
-                    $projectCheckStmt = $conn->prepare("SELECT COUNT(*) as count FROM projects WHERE group_id = ?");
-                    $projectCheckStmt->bind_param("i", $group_id);
-                    $projectCheckStmt->execute();
-                    $projectCheckResult = $projectCheckStmt->get_result();
-                    $projectCheckRow = $projectCheckResult->fetch_assoc();
-                    $projectCheckStmt->close();
-
-                    if ($projectCheckRow['count'] == 0) {
-                        $insertProjectStmt = $conn->prepare("INSERT INTO projects (group_id, title, description) VALUES (?, '', '')");
-                        $insertProjectStmt->bind_param("i", $group_id);
-                        $insertProjectStmt->execute();
-                        $insertProjectStmt->close();
-                    }
-                    header("Refresh:0");
-                } else {
-                    $message = "<div class='alert alert-danger'>Failed to assign student: " . $stmt->error . "</div>";
+                if (!$stmt->execute()) {
+                    throw new Exception("Failed to assign student: " . $stmt->error);
                 }
-                $stmt->close();
+
+                // Set first student as leader if group was empty
+                if ($isFirstMember) {
+                    $setLeaderStmt = $conn->prepare("UPDATE groups SET leader_id = ? WHERE id = ?");
+                    $setLeaderStmt->bind_param("ii", $student_id, $group_id);
+                    if (!$setLeaderStmt->execute()) {
+                        throw new Exception("Failed to set group leader: " . $setLeaderStmt->error);
+                    }
+                    $setLeaderStmt->close();
+                }
+
+                // Ensure project exists for the group
+                $projectCheckStmt = $conn->prepare("SELECT COUNT(*) as count FROM projects WHERE group_id = ?");
+                $projectCheckStmt->bind_param("i", $group_id);
+                $projectCheckStmt->execute();
+                $projectCheckResult = $projectCheckStmt->get_result();
+                $projectCheckRow = $projectCheckResult->fetch_assoc();
+                $projectCheckStmt->close();
+                if ($projectCheckRow['count'] == 0) {
+                    $insertProjectStmt = $conn->prepare("INSERT INTO projects (group_id, title, description) VALUES (?, '', '')");
+                    $insertProjectStmt->bind_param("i", $group_id);
+                    $insertProjectStmt->execute();
+                    $insertProjectStmt->close();
+                }
+
+                $conn->commit();
+                $message = "<div class='alert alert-success'>Student assigned to group successfully!" . ($isFirstMember ? " Set as group leader." : "") . "</div>";
+                header("Refresh:0");
+            } catch (Exception $e) {
+                $conn->rollback();
+                $message = "<div class='alert alert-danger'>" . $e->getMessage() . "</div>";
             }
+            $stmt->close();
         }
-        $stmt->close();
     }
 }
 
 // Handle group deletion
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_group'])) {
     error_log("Delete group POST data: " . print_r($_POST, true) . " at " . date('Y-m-d H:i:s'));
-    
     $group_id = isset($_POST['delete_group_id']) ? intval($_POST['delete_group_id']) : 0;
-    
     if ($group_id <= 0) {
         error_log("Invalid group ID received: $group_id at " . date('Y-m-d H:i:s'));
         $message = "<div class='alert alert-danger'>Error: Invalid group ID provided.</div>";
     } else {
         error_log("Attempting to delete group ID: $group_id");
-
         $conn->begin_transaction();
         try {
             $stmt = $conn->prepare("DELETE FROM meetings WHERE group_id = ?");
@@ -406,41 +471,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_group'])) {
             $stmt->bind_param("i", $group_id);
             if (!$stmt->execute()) throw new Exception("Failed to delete meetings: " . $stmt->error);
             error_log("Deleted meetings for group ID: $group_id");
-        
             $stmt = $conn->prepare("DELETE FROM deliverable_submissions WHERE group_id = ?");
             if (!$stmt) throw new Exception("Prepare failed (submissions): " . $conn->error);
             $stmt->bind_param("i", $group_id);
             if (!$stmt->execute()) throw new Exception("Failed to delete submissions: " . $stmt->error);
             error_log("Deleted submissions for group ID: $group_id");
-        
             $stmt = $conn->prepare("
                 DELETE gers FROM group_evaluation_rubric_scores gers
-                INNER JOIN group_evaluations ge ON gers.group_evaluation_id = ge.id 
+                INNER JOIN group_evaluations ge ON gers.group_evaluation_id = ge.id
                 WHERE ge.group_id = ?
             ");
             if (!$stmt) throw new Exception("Prepare failed (evaluation scores): " . $conn->error);
             $stmt->bind_param("i", $group_id);
             if (!$stmt->execute()) throw new Exception("Failed to delete evaluation scores: " . $stmt->error);
             error_log("Deleted evaluation scores for group ID: $group_id");
-        
             $stmt = $conn->prepare("DELETE FROM group_evaluations WHERE group_id = ?");
             if (!$stmt) throw new Exception("Prepare failed (evaluations): " . $conn->error);
             $stmt->bind_param("i", $group_id);
             if (!$stmt->execute()) throw new Exception("Failed to delete evaluations: " . $stmt->error);
             error_log("Deleted evaluations for group ID: $group_id");
-        
             $stmt = $conn->prepare("DELETE FROM projects WHERE group_id = ?");
             if (!$stmt) throw new Exception("Prepare failed (projects): " . $conn->error);
             $stmt->bind_param("i", $group_id);
             if (!$stmt->execute()) throw new Exception("Failed to delete projects: " . $stmt->error);
             error_log("Deleted projects for group ID: $group_id");
-        
             $stmt = $conn->prepare("DELETE FROM group_members WHERE group_id = ?");
             if (!$stmt) throw new Exception("Prepare failed (members): " . $conn->error);
             $stmt->bind_param("i", $group_id);
             if (!$stmt->execute()) throw new Exception("Failed to delete members: " . $stmt->error);
             error_log("Deleted members for group ID: $group_id");
-        
             $stmt = $conn->prepare("DELETE FROM groups WHERE id = ?");
             if (!$stmt) throw new Exception("Prepare failed (group): " . $conn->error);
             $stmt->bind_param("i", $group_id);
@@ -449,7 +508,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_group'])) {
                 throw new Exception("Group ID $group_id does not exist or was already deleted");
             }
             error_log("Deleted group ID: $group_id");
-
             $conn->commit();
             error_log("Transaction committed for group ID: $group_id");
             $message = "<div class='alert alert-success'>Group deleted successfully!</div>";
@@ -467,7 +525,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_group'])) {
     }
 }
 ?>
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -477,100 +534,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_group'])) {
     <meta name="description" content="">
     <meta name="author" content="">
     <title>Coordinator - Assign Supervisors & Assessors > Assign Groups</title>
-
     <link href="vendor/fontawesome-free/css/all.min.css" rel="stylesheet" type="text/css">
     <link href="https://fonts.googleapis.com/css?family=Nunito:200,200i,300,300i,400,400i,600,600i,700,700i,800,800i,900,900i" rel="stylesheet">
     <link href="css/sb-admin-2.min.css" rel="stylesheet">
     <link href="vendor/datatables/dataTables.bootstrap4.min.css" rel="stylesheet">
     <style>
-        .info-icon {
-            cursor: pointer;
-            color: #4e73df;
-            margin-left: 5px;
-        }
-        .info-icon:hover {
-            color: #224abe;
-        }
-        .modal-body .table {
-            width: 100%;
-            margin-bottom: 0;
-        }
-        .modal-body .table th {
-            font-weight: bold;
-            vertical-align: middle;
-            background-color: #f8f9fc;
-            text-align: center;
-        }
-        .modal-body .table td {
-            vertical-align: middle;
-            word-wrap: break-word;
-            text-align: center;
-        }
-        .modal-body .table tr {
-            border-bottom: 1px solid #e3e6f0;
-        }
-        #assignGroupModal .modal-body,
-        #deleteGroupModal .modal-body,
-        #manageMembersModal .modal-body {
-            font-size: 1rem;
-            line-height: 1.5;
-        }
-        .card-spacing {
-            margin-bottom: 2.5rem;
-        }
-        .delete-group-button, .manage-members-button {
-            pointer-events: auto !important;
-            opacity: 1 !important;
-            z-index: 100 !important;
-            cursor: pointer !important;
-            margin-right: 5px;
-        }
-        .table-responsive {
-            position: relative;
-            z-index: 1;
-        }
-        .delete-group-button:disabled, .manage-members-button:disabled {
-            cursor: not-allowed;
-            opacity: 0.65;
-        }
-        .autocomplete-container {
-            position: relative;
-        }
+        .info-icon { cursor: pointer; color: #4e73df; margin-left: 5px; }
+        .info-icon:hover { color: #224abe; }
+        .modal-body .table { width: 100%; margin-bottom: 0; }
+        .modal-body .table th { font-weight: bold; vertical-align: middle; background-color: #f8f9fc; text-align: center; }
+        .modal-body .table td { vertical-align: middle; word-wrap: break-word; text-align: center; }
+        .modal-body .table tr { border-bottom: 1px solid #e3e6f0; }
+        #assignGroupModal .modal-body, #deleteGroupModal .modal-body, #manageMembersModal .modal-body { font-size: 1rem; line-height: 1.5; }
+        .card-spacing { margin-bottom: 2.5rem; }
+        .delete-group-button, .manage-members-button, .set-leader-button { pointer-events: auto !important; opacity: 1 !important; z-index: 100 !important; cursor: pointer !important; margin-right: 5px; }
+        .table-responsive { position: relative; z-index: 1; }
+        .delete-group-button:disabled, .manage-members-button:disabled, .set-leader-button:disabled { cursor: not-allowed; opacity: 0.65; }
+        .autocomplete-container { position: relative; }
         .autocomplete-suggestions {
-            position: absolute;
-            top: 100%;
-            left: 0;
-            right: 0;
-            z-index: 1000;
-            background-color: #fff;
-            border: 1px solid #d1d3e2;
-            border-radius: 4px;
-            max-height: 200px;
-            overflow-y: auto;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            display: none;
+            position: absolute; top: 100%; left: 0; right: 0; z-index: 1000;
+            background-color: #fff; border: 1px solid #d1d3e2; border-radius: 4px;
+            max-height: 200px; overflow-y: auto; box-shadow: 0 2px 4px rgba(0,0,0,0.1); display: none;
         }
-        .autocomplete-suggestion {
-            padding: 8px 12px;
-            cursor: pointer;
-        }
-        .autocomplete-suggestion:hover {
-            background-color: #f8f9fc;
-        }
-        .autocomplete-suggestion.active {
-            background-color: #4e73df;
-            color: #fff;
-        }
-        #group-details {
-            margin-top: 15px;
-            padding: 10px;
-            border: 1px solid #e3e6f0;
-            border-radius: 4px;
-            background-color: #f8f9fc;
-        }
-        #group-details p {
-            margin: 0;
-        }
+        .autocomplete-suggestion { padding: 8px 12px; cursor: pointer; }
+        .autocomplete-suggestion:hover { background-color: #f8f9fc; }
+        .autocomplete-suggestion.active { background-color: #4e73df; color: #fff; }
+        #group-details { margin-top: 15px; padding: 10px; border: 1px solid #e3e6f0; border-radius: 4px; background-color: #f8f9fc; }
+        #group-details p { margin: 0; }
+        /* Increase width of Manage Members modal */
+        #manageMembersModal .modal-dialog { max-width: 700px; }
+        .manage-members-button-group { display: flex; gap: 10px; justify-content: center; }
     </style>
 </head>
 <body id="page-top">
@@ -639,7 +632,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_group'])) {
             </div>
         </ul>
         <!-- End of Sidebar -->
-
         <!-- Content Wrapper -->
         <div id="content-wrapper" class="d-flex flex-column">
             <!-- Main Content -->
@@ -667,7 +659,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_group'])) {
                     </ul>
                 </nav>
                 <!-- End of Topbar -->
-
                 <!-- Begin Page Content -->
                 <div class="container-fluid">
                     <!-- Page Heading -->
@@ -678,7 +669,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_group'])) {
                         </a>
                     </div>
                     <?php echo $message; ?>
-                    
                     <!-- Create Group Card -->
                     <div class="card shadow mb-4 card-spacing">
                         <div class="card-header py-3">
@@ -709,7 +699,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_group'])) {
                             <?php endif; ?>
                         </div>
                     </div>
-                    
                     <!-- Unassigned Students Table -->
                     <div class="card shadow mb-4 card-spacing">
                         <div class="card-header py-3">
@@ -732,9 +721,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_group'])) {
                                                     <td><?php echo htmlspecialchars($student['full_name']); ?></td>
                                                     <td><?php echo htmlspecialchars($student['email']); ?></td>
                                                     <td>
-                                                        <button class="btn btn-primary btn-sm assign-group-button" 
-                                                                data-student-id="<?php echo htmlspecialchars($student['id']); ?>"
-                                                                data-student-name="<?php echo htmlspecialchars($student['full_name']); ?>">
+                                                        <button class="btn btn-primary btn-sm assign-group-button" data-student-id="<?php echo htmlspecialchars($student['id']); ?>" data-student-name="<?php echo htmlspecialchars($student['full_name']); ?>">
                                                             Assign Group
                                                         </button>
                                                     </td>
@@ -748,7 +735,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_group'])) {
                             </div>
                         </div>
                     </div>
-                    
                     <!-- Existing Groups Table -->
                     <div class="card shadow mb-4 card-spacing">
                         <div class="card-header py-3">
@@ -773,14 +759,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_group'])) {
                                                     <td><?php echo htmlspecialchars($group['student_count']); ?> Student(s)</td>
                                                     <td><?php echo htmlspecialchars($group['group_members'] ?? 'None'); ?></td>
                                                     <td>
-                                                        <button class="btn btn-primary btn-sm manage-members-button"
-                                                                data-group-id="<?php echo htmlspecialchars($group['id']); ?>"
-                                                                data-group-name="<?php echo htmlspecialchars($group['name']); ?>">
+                                                        <button class="btn btn-primary btn-sm manage-members-button" data-group-id="<?php echo htmlspecialchars($group['id']); ?>" data-group-name="<?php echo htmlspecialchars($group['name']); ?>">
                                                             <i class="fas fa-users-cog"></i> Manage Members
                                                         </button>
-                                                        <button class="btn btn-danger btn-sm delete-group-button"
-                                                                data-group-id="<?php echo htmlspecialchars($group['id']); ?>"
-                                                                data-group-name="<?php echo htmlspecialchars($group['name']); ?>">
+                                                        <button class="btn btn-danger btn-sm delete-group-button" data-group-id="<?php echo htmlspecialchars($group['id']); ?>" data-group-name="<?php echo htmlspecialchars($group['name']); ?>">
                                                             <i class="fas fa-trash"></i> Delete
                                                         </button>
                                                     </td>
@@ -796,26 +778,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_group'])) {
                     </div>
                 </div>
                 <!-- End of Content Wrapper -->
-
-            <!-- Footer -->
-            <footer class="sticky-footer bg-white">
-                <div class="container my-auto">
-                    <div class="copyright text-center my-auto">
-                        <span>Copyright &copy; FYPCollabor8 2025</span>
+                <!-- Footer -->
+                <footer class="sticky-footer bg-white">
+                    <div class="container my-auto">
+                        <div class="copyright text-center my-auto">
+                            <span>Copyright &copy; FYPCollabor8 2025</span>
+                        </div>
                     </div>
-                </div>
-            </footer>
-            <!-- End of Footer -->
+                </footer>
+                <!-- End of Footer -->
             </div>
             <!-- End of Main Content -->
         </div>
         <!-- End of Page Wrapper -->
-
         <!-- Scroll to Top Button-->
         <a class="scroll-to-top rounded" href="#page-top">
             <i class="fas fa-angle-up"></i>
         </a>
-
         <!-- Logout Modal-->
         <div class="modal fade" id="logoutModal" tabindex="-1" role="dialog" aria-labelledby="exampleModalLabel" aria-hidden="true">
             <div class="modal-dialog" role="document">
@@ -834,7 +813,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_group'])) {
                 </div>
             </div>
         </div>
-
         <!-- Assign Group Modal -->
         <div class="modal fade" id="assignGroupModal" tabindex="-1" role="dialog" aria-labelledby="assignGroupModalLabel" aria-hidden="true">
             <div class="modal-dialog" role="document">
@@ -867,7 +845,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_group'])) {
                 </div>
             </div>
         </div>
-
         <!-- Delete Group Modal -->
         <div class="modal fade" id="deleteGroupModal" tabindex="-1" role="dialog" aria-labelledby="deleteGroupModalLabel" aria-hidden="true">
             <div class="modal-dialog" role="document">
@@ -886,14 +863,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_group'])) {
                         <input type="hidden" name="delete_group_id" id="deleteGroupId" value="">
                         <input type="hidden" name="delete_group" value="1">
                         <div class="modal-footer">
-                            <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
+                            <button type="button" class="btn btn-secondary" type="button" data-dismiss="modal">Cancel</button>
                             <button type="submit" class="btn btn-danger">Delete Group</button>
                         </div>
                     </form>
                 </div>
             </div>
         </div>
-
         <!-- Manage Members Modal -->
         <div class="modal fade" id="manageMembersModal" tabindex="-1" role="dialog" aria-labelledby="manageMembersModalLabel" aria-hidden="true">
             <div class="modal-dialog" role="document">
@@ -911,6 +887,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_group'])) {
                             <thead>
                                 <tr>
                                     <th>Student Name</th>
+                                    <th>Leader</th>
                                     <th>Action</th>
                                 </tr>
                             </thead>
@@ -924,7 +901,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_group'])) {
                 </div>
             </div>
         </div>
-
         <!-- Bootstrap core JavaScript -->
         <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
         <script>if (!window.jQuery) { document.write('<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.0/jquery.min.js"><\/script>'); }</script>
@@ -933,28 +909,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_group'])) {
         <script src="js/sb-admin-2.min.js" onerror="console.error('SB Admin script failed to load');"></script>
         <script src="https://cdn.datatables.net/1.11.5/js/jquery.dataTables.min.js"></script>
         <script src="https://cdn.datatables.net/1.11.5/js/dataTables.bootstrap4.min.js"></script>
-        
         <script>
             $(document).ready(function() {
                 // Supervisor autocomplete data
                 const supervisors = <?php echo json_encode($supervisors); ?>;
                 const groupMembers = <?php echo json_encode($groupMembers); ?>;
-
+                
                 // Supervisor autocomplete
                 const lecturerInput = $('#lecturer_name');
                 const lecturerSuggestions = $('#lecturer-suggestions');
                 let selectedIndex = -1;
-
                 lecturerInput.on('input', function() {
                     const query = $(this).val().toLowerCase();
                     lecturerSuggestions.empty().hide();
                     selectedIndex = -1;
-
                     if (query) {
-                        const filtered = supervisors.filter(sup => 
-                            sup.full_name.toLowerCase().startsWith(query)
-                        );
-
+                        const filtered = supervisors.filter(sup => sup.full_name.toLowerCase().startsWith(query));
                         if (filtered.length > 0) {
                             filtered.forEach(sup => {
                                 lecturerSuggestions.append(
@@ -965,7 +935,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_group'])) {
                         }
                     }
                 });
-
                 lecturerSuggestions.on('click', '.autocomplete-suggestion', function() {
                     const id = $(this).data('id');
                     const name = $(this).data('name');
@@ -973,11 +942,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_group'])) {
                     $('#lecturer_id').val(id);
                     lecturerSuggestions.empty().hide();
                 });
-
                 lecturerInput.on('keydown', function(e) {
                     const suggestions = lecturerSuggestions.find('.autocomplete-suggestion');
                     if (suggestions.length === 0) return;
-
                     if (e.key === 'ArrowDown') {
                         e.preventDefault();
                         selectedIndex = Math.min(selectedIndex + 1, suggestions.length - 1);
@@ -994,37 +961,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_group'])) {
                         lecturerSuggestions.empty().hide();
                     }
                 });
-
                 function updateSuggestionHighlight() {
                     lecturerSuggestions.find('.autocomplete-suggestion').removeClass('active');
                     if (selectedIndex >= 0) {
                         lecturerSuggestions.find('.autocomplete-suggestion').eq(selectedIndex).addClass('active');
                     }
                 }
-
-                // Hide suggestions when clicking outside
                 $(document).on('click', function(e) {
                     if (!$(e.target).closest('.autocomplete-container').length) {
                         lecturerSuggestions.empty().hide();
                     }
                 });
 
-                // Enforce prefix in group number input in assign modal
+                // Enforce prefix in group number input
                 $('#assignGroupModal').on('shown.bs.modal', function () {
                     const prefix = '<?php echo htmlspecialchars($groupPrefix); ?>';
                     const groupInput = $('#group_number');
-
                     groupInput.val('');
                     $('#group-details').html('');
-
                     groupInput.on('input', function() {
                         let value = this.value;
                         if (value && !value.startsWith(prefix)) {
                             value = prefix + value.replace(/[^0-9]/g, '');
                             this.value = value;
                         }
-
-                        // Fetch group details via AJAX
                         const groupNumber = value.replace(prefix, '').replace(/[^0-9]/g, '');
                         if (groupNumber.length > 0) {
                             const groupName = prefix + groupNumber.padStart(3, '0');
@@ -1059,32 +1019,63 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_group'])) {
                     const groupName = $(this).data('group-name');
                     $('#manageGroupName').text(groupName);
                     $('#manageGroupId').val(groupId);
-
                     const members = groupMembers[groupId] || [];
                     const membersTable = $('#groupMembersTable');
                     membersTable.empty();
-
                     if (members.length > 0) {
                         members.forEach(member => {
                             membersTable.append(`
                                 <tr>
                                     <td>${member.student_name}</td>
-                                    <td>
-                                        <button class="btn btn-danger btn-sm remove-member-button"
-                                                data-group-id="${groupId}"
-                                                data-student-id="${member.student_id}"
-                                                data-student-name="${member.student_name}">
+                                    <td>${member.is_leader ? '<i class="fas fa-star text-warning"></i> Leader' : ''}</td>
+                                    <td class="manage-members-button-group">
+                                        <button class="btn btn-danger btn-sm remove-member-button" data-group-id="${groupId}" data-student-id="${member.student_id}" data-student-name="${member.student_name}">
                                             <i class="fas fa-user-minus"></i> Remove
                                         </button>
+                                        ${!member.is_leader ? `<button class="btn btn-success btn-sm set-leader-button" data-group-id="${groupId}" data-student-id="${member.student_id}" data-student-name="${member.student_name}">
+                                            <i class="fas fa-star"></i> Set as Leader
+                                        </button>` : ''}
                                     </td>
                                 </tr>
                             `);
                         });
                     } else {
-                        membersTable.append('<tr><td colspan="2" class="text-center">No members in this group.</td></tr>');
+                        membersTable.append('<tr><td colspan="3" class="text-center">No members in this group.</td></tr>');
                     }
-
                     $('#manageMembersModal').modal('show');
+                });
+
+                // Handle setting a student as leader
+                $(document).on('click', '.set-leader-button', function() {
+                    const groupId = $(this).data('group-id');
+                    const studentId = $(this).data('student-id');
+                    const studentName = $(this).data('student-name');
+                    if (confirm(`Set ${studentName} as the leader of this group?`)) {
+                        $.ajax({
+                            url: '<?php echo $_SERVER['PHP_SELF']; ?>',
+                            method: 'POST',
+                            data: { action: 'set_group_leader', group_id: groupId, leader_id: studentId },
+                            dataType: 'json',
+                            success: function(response) {
+                                if (response.success) {
+                                    // Update groupMembers data
+                                    Object.keys(groupMembers).forEach(gId => {
+                                        groupMembers[gId].forEach(member => {
+                                            member.is_leader = (gId == groupId && member.student_id == studentId);
+                                        });
+                                    });
+                                    // Refresh the modal
+                                    $('.manage-members-button[data-group-id="' + groupId + '"]').click();
+                                    alert(response.message);
+                                } else {
+                                    alert('Error: ' + response.message);
+                                }
+                            },
+                            error: function() {
+                                alert('Error setting group leader.');
+                            }
+                        });
+                    }
                 });
 
                 // Handle removing a student from a group
@@ -1092,7 +1083,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_group'])) {
                     const groupId = $(this).data('group-id');
                     const studentId = $(this).data('student-id');
                     const studentName = $(this).data('student-name');
-
                     if (confirm(`Are you sure you want to remove ${studentName} from the group?`)) {
                         $.ajax({
                             url: '<?php echo $_SERVER['PHP_SELF']; ?>',
@@ -1101,29 +1091,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_group'])) {
                             dataType: 'json',
                             success: function(response) {
                                 if (response.success) {
-                                    // Update the groups table
                                     const groupRow = $(`#groupsTable tr[data-group-id="${groupId}"]`);
                                     groupRow.find('td:eq(1)').text(`${response.group.student_count} Student(s)`);
                                     groupRow.find('td:eq(2)').text(response.group.group_members || 'None');
-
-                                    // Update the unassigned students table
                                     const unassignedTable = $('#unassignedStudentsTable').DataTable();
                                     unassignedTable.row.add([
                                         response.student.full_name,
                                         response.student.email,
-                                        `<button class="btn btn-primary btn-sm assign-group-button" 
-                                                data-student-id="${response.student.id}" 
-                                                data-student-name="${response.student.full_name}">
-                                            Assign Group
-                                        </button>`
+                                        `<button class="btn btn-primary btn-sm assign-group-button" data-student-id="${response.student.id}" data-student-name="${response.student.full_name}">Assign Group</button>`
                                     ]).draw();
-
-                                    // Remove the student from the modal
                                     $(`#groupMembersTable tr:has(button[data-student-id="${studentId}"])`).remove();
                                     if ($('#groupMembersTable tr').length === 0) {
-                                        $('#groupMembersTable').append('<tr><td colspan="2" class="text-center">No members in this group.</td></tr>');
+                                        $('#groupMembersTable').append('<tr><td colspan="3" class="text-center">No members in this group.</td></tr>');
                                     }
-
+                                    // Update groupMembers data
+                                    groupMembers[groupId] = groupMembers[groupId].filter(member => member.student_id != studentId);
                                     alert(response.message);
                                 } else {
                                     alert('Error: ' + response.message);
@@ -1167,7 +1149,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_group'])) {
                     $('#group_number').val('');
                     $('#group-details').html('');
                     try {
-                        $('#manageMembersModal').modal('hide'); // Close manage members modal if open
+                        $('#manageMembersModal').modal('hide');
                         $('#assignGroupModal').modal('show');
                     } catch (error) {
                         console.error('Error opening assign modal: ', error);
@@ -1210,5 +1192,5 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_group'])) {
                 }
             });
         </script>
-</body>
+    </body>
 </html>
