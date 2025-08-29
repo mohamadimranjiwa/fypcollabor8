@@ -19,7 +19,6 @@ $passwordMessage = $_SESSION['password_message'];
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_profile'])) {
     $name = $_POST['name'] ?? null;
     $phone = $_POST['phone'] ?? null;
-    $ic_number = $_POST['no_ic'] ?? null;
     $email = $_POST['email'] ?? null;
 
     $updates = [];
@@ -36,11 +35,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_profile'])) {
         $params[] = $phone;
         $types .= 's';
     }
-    if ($ic_number) {
-        $updates[] = "no_ic = ?";
-        $params[] = $ic_number;
-        $types .= 's';
-    }
+
     if ($email) {
         $updates[] = "email = ?";
         $params[] = $email;
@@ -153,7 +148,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['change_password'])) {
 }
 
 // Fetch admin data
-$sql = "SELECT full_name, email, no_tel, no_ic, profile_picture 
+$sql = "SELECT full_name, email, no_tel, profile_picture 
         FROM admins 
         WHERE id = ?";
 $stmt = $conn->prepare($sql);
@@ -175,7 +170,6 @@ $personalInfo = [
     'full_name' => $admin['full_name'] ?? 'N/A',
     'email' => $admin['email'] ?? 'N/A',
     'no_tel' => $admin['no_tel'] ?? 'N/A',
-    'no_ic' => $admin['no_ic'] ?? 'N/A',
     'profile_picture' => $admin['profile_picture'] ?? 'img/undraw_profile.svg',
 ];
 
@@ -289,7 +283,6 @@ $conn->close();
                                     <p><strong>Name:</strong> <?= htmlspecialchars($personalInfo['full_name']) ?></p>
                                     <p><strong>Email:</strong> <?= htmlspecialchars($personalInfo['email']) ?></p>
                                     <p><strong>Phone:</strong> <?= htmlspecialchars($personalInfo['no_tel']) ?></p>
-                                    <p><strong>IC Number:</strong> <?= htmlspecialchars($personalInfo['no_ic']) ?></p>
                                     <?php if (!empty($message)): ?>
                                         <p class="mt-3" style="color: <?= strpos($message, 'successfully') !== false ? 'green' : 'red' ?>"><?= htmlspecialchars($message) ?></p>
                                     <?php endif; ?>
@@ -338,10 +331,6 @@ $conn->close();
                                         <div class="form-group">
                                             <label for="adminPhone">Phone</label>
                                             <input type="text" class="form-control" id="adminPhone" name="phone" value="<?= htmlspecialchars($personalInfo['no_tel']) ?>">
-                                        </div>
-                                        <div class="form-group">
-                                            <label for="adminIC">IC Number</label>
-                                            <input type="text" class="form-control" id="adminIC" name="no_ic" value="<?= htmlspecialchars($personalInfo['no_ic']) ?>">
                                         </div>
                                         <button type="submit" class="btn btn-primary">Update Profile</button>
                                     </form>

@@ -14,6 +14,9 @@ if (isset($_SESSION['user_id'])) {
 // Fetch the coordinator's full name and profile picture from the database
 $sql = "SELECT full_name, profile_picture FROM coordinators WHERE id = ?";
 $stmt = $conn->prepare($sql);
+if (!$stmt) {
+    die("Prepare failed (coordinator query): " . $conn->error);
+}
 $stmt->bind_param("i", $coordinatorID);
 $stmt->execute();
 $result = $stmt->get_result();
@@ -77,7 +80,9 @@ $groupsQuery = "
         g.id, 
         g.name, 
         g.status,
+        ls.id AS supervisor_id,
         ls.full_name AS supervisor_name, 
+        la.id AS assessor_id,
         la.full_name AS assessor_name, 
         COUNT(gm.student_id) AS student_count,
         p.project_id,
@@ -90,7 +95,7 @@ $groupsQuery = "
     LEFT JOIN lecturers la ON g.assessor_id = la.id
     LEFT JOIN group_members gm ON g.id = gm.group_id
     LEFT JOIN students s ON gm.student_id = s.id
-    GROUP BY g.id, g.name, ls.full_name, la.full_name, p.project_id, p.title, p.description
+    GROUP BY g.id, g.name, ls.id, ls.full_name, la.id, la.full_name, p.project_id, p.title, p.description
     ORDER BY g.name ASC";
 $groupsResult = $conn->query($groupsQuery) or die("Error in groups query: " . htmlspecialchars($conn->error));
 $groups = $groupsResult->fetch_all(MYSQLI_ASSOC);
@@ -111,18 +116,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['assign_role'])) {
     $lecturer_id = intval($_POST['lecturer_id']);
     $role = $_POST['role']; // 'supervisor' or 'assessor'
 
-    $column = $role === 'supervisor' ? 'lecturer_id' : 'assessor_id';
-    $sql = "UPDATE groups SET $column = ? WHERE id = ?";
-    $stmt = $conn->prepare($sql);
-    $stmt->bind_param("ii", $lecturer_id, $group_id);
-    
-    if ($stmt->execute()) {
-        $message = "<div class='alert alert-success'>" . ucfirst($role) . " assigned successfully!</div>";
-        header("Refresh:0");
+    if ($group_id <= 0 || $lecturer_id <= 0) {
+        $message = "<div class='alert alert-danger'>Invalid group or lecturer selected.</div>";
     } else {
-        $message = "<div class='alert alert-danger'>Failed to assign " . ucfirst($role) . ": " . htmlspecialchars($stmt->error) . "</div>";
+        $column = $role === 'supervisor' ? 'lecturer_id' : 'assessor_id';
+        $sql = "UPDATE groups SET $column = ? WHERE id = ?";
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            $message = "<div class='alert alert-danger'>Prepare failed: " . $conn->error . "</div>";
+        } else {
+            $stmt->bind_param("ii", $lecturer_id, $group_id);
+            if ($stmt->execute()) {
+                $action = ($stmt->affected_rows > 0) ? 'changed' : 'assigned';
+                $message = "<div class='alert alert-success'>" . ucfirst($role) . " $action successfully!</div>";
+                header("Refresh:0");
+            } else {
+                $message = "<div class='alert alert-danger'>Failed to assign/change " . ucfirst($role) . ": " . htmlspecialchars($stmt->error) . "</div>";
+            }
+            $stmt->close();
+        }
     }
-    $stmt->close();
 }
 ?>
 
@@ -183,6 +196,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['assign_role'])) {
         #groupDetailsModal .modal-body .table th {
             width: 30%;
         }
+        .change-button {
+            margin-left: 5px;
+        }
+        .suggestions {
+            position: absolute;
+            width: 100%;
+            max-height: 200px;
+            overflow-y: auto;
+            z-index: 1000;
+            background: #fff;
+            border: 1px solid #ddd;
+            border-radius: 0.25rem;
+            box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+            display: none;
+        }
+        .suggestions .dropdown-item {
+            cursor: pointer;
+            padding: 0.5rem 1rem;
+        }
+        .suggestions .dropdown-item:hover {
+            background-color: #f8f9fa;
+        }
+        .form-group.position-relative {
+            position: relative;
+        }
     </style>
 </head>
 <body id="page-top">
@@ -229,7 +267,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['assign_role'])) {
                         <a class="collapse-item" href="coorviewstudentdetails.php">View Student Details</a>
                         <a class="collapse-item" href="coormanagerubrics.php">Manage Rubrics</a>
                         <a class="collapse-item" href="coorassignassessment.php">Assign Assessment</a>
-                        <!-- <a class="collapse-item" href="coorevaluatestudent.php">Evaluate Students</a> -->
                     </div>
                 </div>
             </li>
@@ -243,7 +280,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['assign_role'])) {
                         <h6 class="collapse-header">Support Tools:</h6>
                         <a class="collapse-item" href="coormanageannouncement.php">Manage Announcement</a>
                         <a class="collapse-item" href="coormanageteachingmaterials.php">Manage Teaching <br>Materials</a>
-                        <!-- <a class="collapse-item" href="coorsetsemester.php">Manage Semester</a> -->
                     </div>
                 </div>
             </li>
@@ -377,29 +413,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['assign_role'])) {
                                                     <td><?= htmlspecialchars($group['student_count']) ?></td>
                                                     <td>
                                                         <?= htmlspecialchars($group['supervisor_name'] ?? 'Not Assigned') ?>
-                                                        <?php if (!$group['supervisor_name']): ?>
-                                                            <button class="btn btn-primary btn-sm assign-button" 
-                                                                    data-toggle="modal" 
-                                                                    data-target="#assignModal"
-                                                                    data-group-id="<?= $group['id'] ?>"
-                                                                    data-group-name="<?= htmlspecialchars($group['name']) ?>"
-                                                                    data-role="supervisor">
-                                                                Assign
-                                                            </button>
-                                                        <?php endif; ?>
+                                                        <button class="btn btn-primary btn-sm <?= $group['supervisor_name'] ? 'change-button' : 'assign-button' ?>" 
+                                                                data-toggle="modal" 
+                                                                data-target="#assignModal"
+                                                                data-group-id="<?= $group['id'] ?>"
+                                                                data-group-name="<?= htmlspecialchars($group['name']) ?>"
+                                                                data-role="supervisor"
+                                                                data-current-lecturer-id="<?= htmlspecialchars($group['supervisor_id'] ?? '') ?>"
+                                                                data-current-lecturer-name="<?= htmlspecialchars($group['supervisor_name'] ?? '') ?>">
+                                                            <?= $group['supervisor_name'] ? 'Change' : 'Assign' ?>
+                                                        </button>
                                                     </td>
                                                     <td>
                                                         <?= htmlspecialchars($group['assessor_name'] ?? 'Not Assigned') ?>
-                                                        <?php if (!$group['assessor_name']): ?>
-                                                            <button class="btn btn-primary btn-sm assign-button" 
-                                                                    data-toggle="modal" 
-                                                                    data-target="#assignModal"
-                                                                    data-group-id="<?= $group['id'] ?>"
-                                                                    data-group-name="<?= htmlspecialchars($group['name']) ?>"
-                                                                    data-role="assessor">
-                                                                Assign
-                                                            </button>
-                                                        <?php endif; ?>
+                                                        <button class="btn btn-primary btn-sm <?= $group['assessor_name'] ? 'change-button' : 'assign-button' ?>" 
+                                                                data-toggle="modal" 
+                                                                data-target="#assignModal"
+                                                                data-group-id="<?= $group['id'] ?>"
+                                                                data-group-name="<?= htmlspecialchars($group['name']) ?>"
+                                                                data-role="assessor"
+                                                                data-current-lecturer-id="<?= htmlspecialchars($group['assessor_id'] ?? '') ?>"
+                                                                data-current-lecturer-name="<?= htmlspecialchars($group['assessor_name'] ?? '') ?>">
+                                                            <?= $group['assessor_name'] ? 'Change' : 'Assign' ?>
+                                                        </button>
                                                     </td>
                                                 </tr>
                                             <?php endforeach; ?>
@@ -554,12 +590,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['assign_role'])) {
                             <input type="hidden" name="group_id" id="group_id">
                             <input type="hidden" name="role" id="role">
                         </div>
-                        <div class="form-group">
-                            <label for="lecturer_id">Select Lecturer</label>
-                            <select class="form-control" id="lecturer_id" name="lecturer_id" required>
-                                <option value="">-- Select Lecturer --</option>
-                                <!-- Options will be populated dynamically -->
-                            </select>
+                        <div class="form-group position-relative">
+                            <label for="lecturer_search">Search Lecturer</label>
+                            <input type="text" class="form-control" id="lecturer_search" placeholder="Type lecturer name..." autocomplete="off">
+                            <input type="hidden" name="lecturer_id" id="lecturer_id">
+                            <div class="suggestions dropdown-menu" id="lecturer_suggestions"></div>
                         </div>
                         <input type="hidden" name="assign_role" value="1">
                     </form>
@@ -573,21 +608,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['assign_role'])) {
     </div>
 
     <!-- Bootstrap core JavaScript -->
-    <script src="vendor/jquery/jquery.min.js"></script>
-    <script src="vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script>if (!window.jQuery) { document.write('<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.0/jquery.min.js"><\/script>'); }</script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.bundle.min.js"></script>
+    <script src="vendor/jquery-easing/jquery.easing.min.js" onerror="console.error('jQuery Easing failed to load');"></script>
+    <script src="js/sb-admin-2.min.js" onerror="console.error('SB Admin script failed to load');"></script>
+    <script src="https://cdn.datatables.net/1.11.5/js/jquery.dataTables.min.js"></script>
+    <script src="https://cdn.datatables.net/1.11.5/js/dataTables.bootstrap4.min.js"></script>
 
-    <!-- Core plugin JavaScript -->
-    <script src="vendor/jquery-easing/jquery.easing.min.js"></script>
-
-    <!-- Custom scripts for all pages -->
-    <script src="js/sb-admin-2.min.js"></script>
-
-    <!-- Page level plugins -->
-    <script src="vendor/datatables/jquery.dataTables.min.js"></script>
-    <script src="vendor/datatables/dataTables.bootstrap4.min.js"></script>
-
-    <!-- Page level custom scripts -->
-    <script src="js/demo/datatables-demo.js"></script>
     <script>
         $(document).ready(function() {
             // Initialize DataTable for lecturers table
@@ -683,42 +711,102 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['assign_role'])) {
                 $('#groupDetailsModal').modal('show');
             });
 
-            // Populate assignment modal
-            $(document).on('click', '.assign-button', function() {
+            // Populate assignment modal with search input
+            $(document).on('click', '.assign-button, .change-button', function() {
                 var groupId = $(this).data('group-id');
                 var groupName = $(this).data('group-name');
                 var role = $(this).data('role');
+                var currentLecturerId = $(this).data('current-lecturer-id') || '';
+                var currentLecturerName = $(this).data('current-lecturer-name') || '';
 
-                $('#assignModalLabel').text('Assign ' + (role === 'supervisor' ? 'Supervisor' : 'Assessor') + ' for ' + groupName);
+                var action = $(this).hasClass('change-button') ? 'Change' : 'Assign';
+                $('#assignModalLabel').text(action + ' ' + (role === 'supervisor' ? 'Supervisor' : 'Assessor') + ' for ' + groupName);
                 $('#group_name').val(groupName);
                 $('#group_id').val(groupId);
                 $('#role').val(role);
+                $('#submitAssignButton').text(action);
+                $('#lecturer_search').val(currentLecturerName);
+                $('#lecturer_id').val(currentLecturerId);
+                $('#lecturer_suggestions').hide().empty();
 
-                // Populate lecturer dropdown based on role
-                var lecturerSelect = $('#lecturer_id');
-                lecturerSelect.empty();
-                lecturerSelect.append('<option value="">-- Select ' + (role === 'supervisor' ? 'Supervisor' : 'Assessor') + ' --</option>');
-
-                var lecturers = role === 'supervisor' ? <?= json_encode($supervisors) ?> : <?= json_encode($assessors) ?>;
-                lecturers.forEach(function(lecturer) {
-                    lecturerSelect.append('<option value="' + lecturer.id + '">' + lecturer.full_name + '</option>');
-                });
-
-                console.log('Opening assign modal for group: ' + groupName + ', role: ' + role);
+                console.log(action + ' modal opened for group: ' + groupName + ', role: ' + role + ', current lecturer: ' + currentLecturerName + ' (' + currentLecturerId + ')');
             });
 
-            // Handle assignment submission
-            $('#submitAssignButton').on('click', function() {
-                var form = $('#assignForm');
-                var lecturerId = $('#lecturer_id').val();
+            // Handle lecturer search
+            var lecturers = {
+                supervisor: <?= json_encode($supervisors) ?>,
+                assessor: <?= json_encode($assessors) ?>
+            };
 
-                if (!lecturerId) {
-                    alert('Please select a lecturer.');
+            $('#lecturer_search').on('input', function() {
+                var searchTerm = $(this).val().trim().toLowerCase();
+                var role = $('#role').val();
+                var suggestions = $('#lecturer_suggestions');
+                suggestions.empty().hide();
+
+                if (searchTerm.length === 0) {
                     return;
                 }
 
-                form.submit();
-                $('#assignModal').modal('hide');
+                var filteredLecturers = lecturers[role].filter(function(lecturer) {
+                    return lecturer.full_name.toLowerCase().includes(searchTerm);
+                });
+
+                if (filteredLecturers.length > 0) {
+                    filteredLecturers.forEach(function(lecturer) {
+                        suggestions.append(
+                            '<div class="dropdown-item" data-id="' + lecturer.id + '">' + 
+                            lecturer.full_name + '</div>'
+                        );
+                    });
+                    suggestions.show();
+                }
+            });
+
+            // Handle suggestion selection
+            $(document).on('click', '#lecturer_suggestions .dropdown-item', function() {
+                var lecturerId = $(this).data('id');
+                var lecturerName = $(this).text();
+                $('#lecturer_search').val(lecturerName);
+                $('#lecturer_id').val(lecturerId);
+                $('#lecturer_suggestions').hide().empty();
+                console.log('Selected lecturer: ' + lecturerName + ' (' + lecturerId + ')');
+            });
+
+            // Hide suggestions when clicking outside
+            $(document).on('click', function(e) {
+                if (!$(e.target).closest('#lecturer_search, #lecturer_suggestions').length) {
+                    $('#lecturer_suggestions').hide().empty();
+                }
+            });
+
+            // Handle assignment submission with confirmation
+            $('#submitAssignButton').on('click', function() {
+                var form = $('#assignForm');
+                var lecturerId = $('#lecturer_id').val();
+                var role = $('#role').val();
+                var groupName = $('#group_name').val();
+                var action = $('#submitAssignButton').text().toLowerCase();
+
+                if (!lecturerId) {
+                    alert('Please select a lecturer from the suggestions.');
+                    return;
+                }
+
+                var confirmMessage = 'Are you sure you want to ' + action + ' the ' + 
+                                     (role === 'supervisor' ? 'supervisor' : 'assessor') + 
+                                     ' for group ' + groupName + '?';
+                if (confirm(confirmMessage)) {
+                    form.submit();
+                    $('#assignModal').modal('hide');
+                }
+            });
+
+            // Clear suggestions when modal is closed
+            $('#assignModal').on('hidden.bs.modal', function() {
+                $('#lecturer_search').val('');
+                $('#lecturer_id').val('');
+                $('#lecturer_suggestions').hide().empty();
             });
         });
     </script>

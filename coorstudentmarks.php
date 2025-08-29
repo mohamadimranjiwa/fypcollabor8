@@ -166,7 +166,9 @@ while ($row = $marksResult->fetch_assoc()) {
             'student_username' => $row['student_username'],
             'group_id' => $row['group_id'],
             'group_name' => $row['group_name'],
-            'deliverables' => []
+            'deliverables' => [],
+            'total_marks' => 0,
+            'total_grades_count' => 0
         ];
     }
 
@@ -198,21 +200,30 @@ while ($row = $marksResult->fetch_assoc()) {
         $assessorId = $row['group_assessor_id'];
     }
 
-    // Assign grade to the appropriate evaluator
+    // Assign grade to the appropriate evaluator and update total marks
     if ($supervisorId && $grade !== null) {
         $studentData[$studentId]['deliverables'][$delivKey]['supervisor'] = number_format($grade, 2);
         $studentData[$studentId]['deliverables'][$delivKey]['grades_for_average'][] = $grade;
+        $studentData[$studentId]['total_marks'] += $grade;
+        $studentData[$studentId]['total_grades_count'] += 1;
     }
     if ($assessorId && $grade !== null) {
         $studentData[$studentId]['deliverables'][$delivKey]['assessor'] = number_format($grade, 2);
         $studentData[$studentId]['deliverables'][$delivKey]['grades_for_average'][] = $grade;
+        $studentData[$studentId]['total_marks'] += $grade;
+        $studentData[$studentId]['total_grades_count'] += 1;
     }
 
     // Calculate average
     $grades = $studentData[$studentId]['deliverables'][$delivKey]['grades_for_average'];
     $studentData[$studentId]['deliverables'][$delivKey]['average'] = !empty($grades) ? number_format(array_sum($grades) / count($grades), 2) : 'N/A';
 }
-$stmt->close();
+
+// Format total marks for each student
+foreach ($studentData as $studentId => &$data) {
+    $data['total_marks'] = $data['total_grades_count'] > 0 ? number_format($data['total_marks'], 2) : 'N/A';
+}
+unset($data);
 
 $uniqueDeliverables = array_keys($uniqueDeliverables);
 sort($uniqueDeliverables);
@@ -232,6 +243,7 @@ if (isset($_GET['generate_report'])) {
         $csvHeaders[] = $deliverable . ' - Assessor';
         $csvHeaders[] = $deliverable . ' - Average';
     }
+    $csvHeaders[] = 'Total Marks';
     fputcsv($output, $csvHeaders);
 
     // CSV Data
@@ -257,6 +269,7 @@ if (isset($_GET['generate_report'])) {
                 $row[] = '-';
             }
         }
+        $row[] = $data['total_marks'];
         fputcsv($output, $row);
     }
 
@@ -285,65 +298,40 @@ $conn->close();
     <link href="vendor/datatables/dataTables.bootstrap4.min.css" rel="stylesheet">
 
     <style>
-        .info-icon {
-            cursor: pointer;
-            color: #4e73df;
-            margin-left: 5px;
-        }
-        .info-icon:hover {
-            color: #224abe;
-        }
-        /* Table container for fixed and scrollable parts */
         .table-wrapper {
             display: flex;
             width: 100%;
             margin: 1rem 0;
             border-radius: 0.35rem;
-            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            box-shadow: 0 0.15rem 1.75rem 0 rgba(58, 59, 69, 0.15);
         }
-        /* Fixed table (Student Name, Student ID) */
         .fixed-table {
             flex-shrink: 0;
             border-right: 2px solid #e3e6f0;
         }
-        /* Scrollable table (Deliverables) */
         .scrollable-table {
             flex-grow: 1;
             overflow-x: auto;
             -webkit-overflow-scrolling: touch;
         }
-        /* Table styles */
-        .table-bordered {
-            border: 1px solid #e3e6f0;
-            margin-bottom: 0;
-        }
         .table-bordered th,
         .table-bordered td {
-            border: 1px solid #e3e6f0;
-            padding: 1rem;
+            padding: 0.75rem;
             vertical-align: middle;
             white-space: nowrap;
+            box-sizing: border-box;
         }
-        .table-bordered thead th {
-            background-color: #f8f9fc;
-            border-bottom: 2px solid #e3e6f0;
-            font-weight: bold;
-            min-width: 100px;
-        }
-        /* Fixed column widths */
         .fixed-table th:first-child,
         .fixed-table td:first-child {
-            min-width: 200px; /* Student Name */
+            min-width: 200px;
         }
         .fixed-table th:nth-child(2),
         .fixed-table td:nth-child(2) {
-            min-width: 150px; /* Student ID */
+            min-width: 150px;
         }
-        /* Mark cells with colors */
         .mark-cell {
             text-align: center;
             min-width: 100px;
-            padding: 1rem;
         }
         .mark-cell.supervisor {
             background-color: rgba(187, 222, 251, 0.5);
@@ -354,38 +342,38 @@ $conn->close();
         .mark-cell.average {
             background-color: rgba(248, 187, 208, 0.5);
         }
-        /* Synchronize row heights */
+        .mark-cell.total {
+            background-color: rgba(255, 245, 157, 0.5);
+        }
         .fixed-table th,
-        .scrollable-table th,
         .fixed-table td,
+        .scrollable-table th,
         .scrollable-table td {
-            height: 60px; /* Fixed height for consistency */
+            height: 50px;
+            line-height: 1.5;
         }
-        /* Card styling */
-        .card-header {
-            background-color: #f8f9fc;
+        .fixed-table thead th,
+        .scrollable-table thead th {
+            height: 40px;
+            vertical-align: middle;
+            box-sizing: border-box;
+        }
+        .fixed-table thead th[rowspan="2"] {
+            height: 80px;
+            line-height: 80px;
+        }
+        .scrollable-table thead tr:first-child th {
+            height: 40px;
             border-bottom: 1px solid #e3e6f0;
-            padding: 1.5rem;
         }
-        .card {
-            margin-bottom: 2rem;
-            box-shadow: 0 0.15rem 1.75rem 0 rgba(58, 59, 69, 0.15) !important;
+        .scrollable-table thead tr:nth-child(2) th {
+            height: 40px;
+            border-top: none;
         }
-        .card-body {
-            padding: 1.5rem;
+        .scrollable-table thead th[rowspan="2"] {
+            height: 80px;
+            line-height: 80px;
         }
-        /* Filter section styling */
-        .form-control {
-            font-size: 0.875rem;
-            border-radius: 0.35rem;
-            padding: 0.375rem 0.75rem;
-            border: 1px solid #d1d3e2;
-        }
-        .form-control:focus {
-            border-color: #bac8f3;
-            box-shadow: 0 0 0 0.2rem rgba(78, 115, 223, 0.25);
-        }
-        /* Legend for mark types */
         .marks-legend {
             display: flex;
             gap: 1rem;
@@ -413,48 +401,13 @@ $conn->close();
         .legend-average {
             background-color: rgba(248, 187, 208, 0.5);
         }
-        /* Fix header alignment */
-        .table thead th {
-            vertical-align: middle;
-            height: 50px; /* Set a fixed height for header rows */
-        }
-        
-        .table thead tr:first-child th {
-            border-bottom: none; /* Remove bottom border for first row */
-        }
-        
-        .table thead tr:last-child th {
-            border-top: none; /* Remove top border for second row */
-        }
-        
-        /* Ensure empty row has proper height */
-        .fixed-table thead tr:empty,
-        .scrollable-table thead tr:empty {
-            height: 50px;
-            display: table-row;
-        }
-        
-        /* Ensure consistent heights between fixed and scrollable tables */
-        .fixed-table thead tr,
-        .scrollable-table thead tr {
-            height: 50px;
-        }
-        
-        /* Adjust vertical alignment for rowspan cells */
-        th[rowspan="2"] {
-            vertical-align: middle !important;
-        }
-        
-        /* Ensure second header row is visible */
-        thead tr:nth-child(2) {
-            height: 50px !important;
-            visibility: visible !important;
+        .legend-total {
+            background-color: rgba(255, 245, 157, 0.5);
         }
     </style>
 </head>
 <body id="page-top">
     <div id="wrapper">
-        <!-- Sidebar -->
         <ul class="navbar-nav bg-gradient-primary sidebar sidebar-dark accordion" id="accordionSidebar">
             <a class="sidebar-brand d-flex align-items-center justify-content-center" href="coordinatordashboard.php">
                 <div class="sidebar-brand-icon rotate-n-15">
@@ -499,7 +452,6 @@ $conn->close();
                         <a class="collapse-item active" href="coorviewstudentdetails.php">View Student Details</a>
                         <a class="collapse-item" href="coormanagerubrics.php">Manage Rubrics</a>
                         <a class="collapse-item" href="coorassignassessment.php">Assign Assessment</a>
-                        <!-- <a class="collapse-item" href="coorevaluatestudent.php">Evaluate Students</a> -->
                     </div>
                 </div>
             </li>
@@ -514,7 +466,6 @@ $conn->close();
                         <h6 class="collapse-header">Support Tools:</h6>
                         <a class="collapse-item" href="coormanageannouncement.php">Manage Announcement</a>
                         <a class="collapse-item" href="coormanageteachingmaterials.php">Manage Teaching <br>Materials</a>
-                        <!-- <a class="collapse-item" href="coorsetsemester.php">Manage Semester</a> -->
                     </div>
                 </div>
             </li>
@@ -523,13 +474,8 @@ $conn->close();
                 <button class="rounded-circle border-0" id="sidebarToggle"></button>
             </div>
         </ul>
-        <!-- End of Sidebar -->
-
-        <!-- Content Wrapper -->
         <div id="content-wrapper" class="d-flex flex-column">
-            <!-- Main Content -->
             <div id="content">
-                <!-- Topbar -->
                 <nav class="navbar navbar-expand navbar-light bg-white topbar mb-4 static-top shadow">
                     <ul class="navbar-nav ml-auto">
                         <li class="nav-item dropdown no-arrow">
@@ -555,9 +501,6 @@ $conn->close();
                         </li>
                     </ul>
                 </nav>
-                <!-- End of Topbar -->
-
-                <!-- Begin Page Content -->
                 <div class="container-fluid">
                     <?= $message ?>
                     <div class="d-sm-flex align-items-center justify-content-between mb-4">
@@ -566,8 +509,6 @@ $conn->close();
                             <i class="fas fa-arrow-left fa-sm text-white-50"></i> Back to View Student Details
                         </a>
                     </div>
-
-                    <!-- Filters Card -->
                     <div class="card shadow mb-4">
                         <div class="card-header py-3">
                             <h6 class="m-0 font-weight-bold text-primary">Filter Marks</h6>
@@ -575,7 +516,6 @@ $conn->close();
                         <div class="card-body">
                             <form method="GET" action="">
                                 <div class="row">
-                                    <!-- Submission Type Filter -->
                                     <div class="col-md-3 mb-3">
                                         <label for="semester">Semester</label>
                                         <select class="form-control" id="semester" name="semester">
@@ -588,26 +528,11 @@ $conn->close();
                                             <?php endforeach; ?>
                                         </select>
                                     </div>
-                                    <!-- Student Name Search -->
                                     <div class="col-md-3 mb-3">
                                         <label for="student_name">Search Student Name</label>
                                         <input type="text" class="form-control" id="student_name" name="student_name" 
                                                value="<?= htmlspecialchars($searchStudent) ?>" placeholder="Enter student name">
                                     </div>
-                                    <!-- Group Name Filter -->
-                                    <div class="col-md-3 mb-3">
-                                        <label for="group_name">Group Name</label>
-                                        <select class="form-control" id="group_name" name="group_name">
-                                            <option value="">-- All Groups --</option>
-                                            <?php foreach ($groups as $group): ?>
-                                                <option value="<?= htmlspecialchars($group['name']) ?>" 
-                                                        <?= $selectedGroup === $group['name'] ? 'selected' : '' ?>>
-                                                    <?= htmlspecialchars($group['name']) ?>
-                                                </option>
-                                            <?php endforeach; ?>
-                                        </select>
-                                    </div>
-                                    <!-- Deliverable Filter -->
                                     <div class="col-md-3 mb-3">
                                         <label for="deliverable_id">Deliverable</label>
                                         <select class="form-control" id="deliverable_id" name="deliverable_id">
@@ -620,14 +545,42 @@ $conn->close();
                                             <?php endforeach; ?>
                                         </select>
                                     </div>
+                                    <div class="col-md-3 mb-3">
+                                        <label for="group_name">Group Name</label>
+                                        <select class="form-control" id="group_name" name="group_name">
+                                            <option value="">-- All Groups --</option>
+                                            <?php foreach ($groups as $group): ?>
+                                                <option value="<?= htmlspecialchars($group['name']) ?>" 
+                                                        <?= $selectedGroup === $group['name'] ? 'selected' : '' ?>>
+                                                    <?= htmlspecialchars($group['name']) ?>
+                                                </option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </div>
                                 </div>
                                 <button type="submit" class="btn btn-primary">Apply Filters</button>
                                 <a href="coorstudentmarks.php" class="btn btn-secondary">Clear Filters</a>
                             </form>
                         </div>
                     </div>
-
-                    <!-- Marks Table -->
+                    <div class="marks-legend">
+                        <div class="legend-item">
+                            <div class="legend-color legend-supervisor"></div>
+                            <span class="ml-2">Supervisor Marks</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color legend-assessor"></div>
+                            <span class="ml-2">Assessor Marks</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color legend-average"></div>
+                            <span class="ml-2">Average Marks</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color legend-total"></div>
+                            <span class="ml-2">Total Marks</span>
+                        </div>
+                    </div>
                     <div class="card shadow mb-4">
                         <div class="card-header py-3 d-flex justify-content-between align-items-center">
                             <h6 class="m-0 font-weight-bold text-primary">Student Marks</h6>
@@ -637,7 +590,6 @@ $conn->close();
                         </div>
                         <div class="card-body">
                             <div class="table-wrapper">
-                                <!-- Fixed Table (Student Name, Student ID) -->
                                 <div class="fixed-table">
                                     <table class="table table-bordered" id="fixedTable">
                                         <thead>
@@ -645,7 +597,6 @@ $conn->close();
                                                 <th rowspan="2" class="align-middle">Student Name</th>
                                                 <th rowspan="2" class="align-middle">Student ID</th>
                                             </tr>
-                                            <tr></tr>
                                         </thead>
                                         <tbody>
                                             <?php if (!empty($studentData)): ?>
@@ -661,7 +612,6 @@ $conn->close();
                                         </tbody>
                                     </table>
                                 </div>
-                                <!-- Scrollable Table (Deliverables) -->
                                 <div class="scrollable-table">
                                     <table class="table table-bordered" id="scrollableTable">
                                         <thead>
@@ -669,6 +619,7 @@ $conn->close();
                                                 <?php foreach ($uniqueDeliverables as $deliverable): ?>
                                                     <th colspan="3" class="text-center"><?= htmlspecialchars($deliverable) ?></th>
                                                 <?php endforeach; ?>
+                                                <th rowspan="2" class="align-middle">Total Marks</th>
                                             </tr>
                                             <tr>
                                                 <?php foreach ($uniqueDeliverables as $deliverable): ?>
@@ -703,10 +654,11 @@ $conn->close();
                                                                 <td class="text-center">-</td>
                                                         <?php endif; ?>
                                                         <?php endforeach; ?>
+                                                        <td class="mark-cell total"><?= htmlspecialchars($data['total_marks']) ?></td>
                                                     </tr>
                                                 <?php endforeach; ?>
                                             <?php else: ?>
-                                                <tr><td colspan="<?= count($uniqueDeliverables) * 3 ?>" class="text-center">No marks found.</td></tr>
+                                                <tr><td colspan="<?= (count($uniqueDeliverables) * 3) + 1 ?>" class="text-center">No marks found.</td></tr>
                                             <?php endif; ?>
                                         </tbody>
                                     </table>
@@ -715,26 +667,15 @@ $conn->close();
                         </div>
                     </div>
                 </div>
-                <!-- End of Page Content -->
             </div>
-            <!-- End of Main Content -->
-
-            <!-- Footer -->
             <footer class="sticky-footer bg-white">
                 <div class="container my-auto">
                     <div class="copyright text-center my-auto"><span>Copyright © FYPCollabor8 2025</span></div>
                 </div>
             </footer>
-            <!-- End of Footer -->
         </div>
-        <!-- End of Content Wrapper -->
     </div>
-    <!-- End of Page Wrapper -->
-
-    <!-- Scroll to Top Button -->
     <a class="scroll-to-top rounded" href="#page-top"><i class="fas fa-angle-up"></i></a>
-
-    <!-- Logout Modal -->
     <div class="modal fade" id="logoutModal" tabindex="-1" role="dialog" aria-labelledby="exampleModalLabel"
         aria-hidden="true">
         <div class="modal-dialog" role="document">
@@ -753,32 +694,13 @@ $conn->close();
             </div>
         </div>
     </div>
-
-    <!-- Bootstrap core JavaScript -->
     <script src="vendor/jquery/jquery.min.js"></script>
     <script src="vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
-
-    <!-- Core plugin JavaScript -->
     <script src="vendor/jquery-easing/jquery.easing.min.js"></script>
-
-    <!-- Custom scripts for all pages -->
     <script src="js/sb-admin-2.min.js"></script>
-
-    <!-- Page level plugins -->
     <script src="vendor/datatables/jquery.dataTables.min.js"></script>
     <script src="vendor/datatables/dataTables.bootstrap4.min.js"></script>
-
-    <!-- Page level custom scripts -->
     <script>
-        $(document).ready(function() {
-            // Disable DataTables to prevent interference with fixed columns
-            // $('#fixedTable, #scrollableTable').DataTable({
-            //     paging: false,
-            //     searching: false,
-            //     ordering: true,
-            //     scrollX: false
-            // });
-        });
     </script>
 </body>
 </html>

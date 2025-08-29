@@ -18,7 +18,6 @@ $passwordMessage = $_SESSION['password_message'];
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_profile'])) {
     $name = $_POST['name'] ?? null;
     $phone = $_POST['phone'] ?? null;
-    $ic_number = $_POST['no_ic'] ?? null;
     $email = $_POST['email'] ?? null;
     $username = $_POST['username'] ?? null; // Added username
 
@@ -34,11 +33,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_profile'])) {
     if ($phone) {
         $updates[] = "no_tel = ?";
         $params[] = $phone;
-        $types .= 's';
-    }
-    if ($ic_number) {
-        $updates[] = "no_ic = ?";
-        $params[] = $ic_number;
         $types .= 's';
     }
     if ($email) {
@@ -161,7 +155,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['change_password'])) {
 }
 
 // Fetch coordinator data
-$sql = "SELECT full_name, email, no_tel, no_ic, profile_picture, username 
+$sql = "SELECT full_name, email, no_tel, profile_picture, username 
         FROM coordinators 
         WHERE id = ?";
 $stmt = $conn->prepare($sql);
@@ -179,7 +173,6 @@ $personalInfo = [
     'full_name' => $coordinator['full_name'] ?? 'N/A',
     'email' => $coordinator['email'] ?? 'N/A',
     'no_tel' => $coordinator['no_tel'] ?? 'N/A',
-    'no_ic' => $coordinator['no_ic'] ?? 'N/A',
     'profile_picture' => $coordinator['profile_picture'] ?? 'img/undraw_profile.svg',
     'username' => $coordinator['username'] ?? 'N/A', // Added username
 ];
@@ -327,7 +320,6 @@ $_SESSION['password_message'] = '';
                                     <p><strong>Username:</strong> <?= htmlspecialchars($personalInfo['username']) ?></p> <!-- Added username -->
                                     <p><strong>Email:</strong> <?= htmlspecialchars($personalInfo['email']) ?></p>
                                     <p><strong>Phone:</strong> <?= htmlspecialchars($personalInfo['no_tel']) ?></p>
-                                    <p><strong>IC Number:</strong> <?= htmlspecialchars($personalInfo['no_ic']) ?></p>
                                     <?php if (!empty($message)): ?>
                                         <p class="mt-3" style="color: <?= strpos($message, 'successfully') !== false ? 'green' : 'red' ?>"><?= htmlspecialchars($message) ?></p>
                                     <?php endif; ?>
@@ -380,10 +372,6 @@ $_SESSION['password_message'] = '';
                                         <div class="form-group">
                                             <label for="coordinatorPhone">Phone</label>
                                             <input type="text" class="form-control" id="coordinatorPhone" name="phone" value="<?= htmlspecialchars($personalInfo['no_tel']) ?>">
-                                        </div>
-                                        <div class="form-group">
-                                            <label for="coordinatorIC">IC Number</label>
-                                            <input type="text" class="form-control" id="coordinatorIC" name="no_ic" value="<?= htmlspecialchars($personalInfo['no_ic']) ?>">
                                         </div>
                                         <button type="submit" class="btn btn-primary">Update Profile</button>
                                     </form>

@@ -18,7 +18,6 @@ $passwordMessage = $_SESSION['password_message'];
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_profile'])) {
     $name = $_POST['name'] ?? null;
     $phone = $_POST['phone'] ?? null;
-    $ic_number = $_POST['no_ic'] ?? null;
     $email = $_POST['email'] ?? null;
 
     $updates = [];
@@ -35,11 +34,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_profile'])) {
         $params[] = $phone;
         $types .= 's';
     }
-    if ($ic_number) {
-        $updates[] = "no_ic = ?";
-        $params[] = $ic_number;
-        $types .= 's';
-    }
+
     if ($email) {
         $updates[] = "email = ?";
         $params[] = $email;
@@ -142,7 +137,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['change_password'])) {
 }
 
 // Fetch student data (including username)
-$sql = "SELECT full_name, email, no_tel, no_ic, intake_year, intake_month, profile_picture, username 
+$sql = "SELECT full_name, email, no_tel, intake_year, intake_month, profile_picture, username 
         FROM students 
         WHERE id = ?";
 $stmt = $conn->prepare($sql);
@@ -160,7 +155,6 @@ $personalInfo = [
     'full_name' => $student['full_name'] ?? 'N/A',
     'email' => $student['email'] ?? 'N/A',
     'no_tel' => $student['no_tel'] ?? 'N/A',
-    'no_ic' => $student['no_ic'] ?? 'N/A',
     'intake_year' => (!empty($student['intake_year']) && $student['intake_year'] != 0) ? $student['intake_year'] : 'N/A',
     'intake_month' => (!empty($student['intake_month']) && $student['intake_month'] !== '') ? $student['intake_month'] : 'N/A',
     'profile_picture' => $student['profile_picture'] ?? 'img/undraw_profile.svg',
@@ -296,7 +290,6 @@ $_SESSION['password_message'] = '';
                                     <p class="card-text"><strong>Username:</strong> <?= htmlspecialchars($personalInfo['username']) ?></p>
                                     <p class="card-text"><strong>Email:</strong> <?= htmlspecialchars($personalInfo['email']) ?></p>
                                     <p class="card-text"><strong>Phone:</strong> <?= htmlspecialchars($personalInfo['no_tel']) ?></p>
-                                    <p class="card-text"><strong>IC Number:</strong> <?= htmlspecialchars($personalInfo['no_ic']) ?></p>
                                     <p class="card-text"><strong>Intake:</strong> <?= htmlspecialchars($personalInfo['intake_month'] . ' ' . $personalInfo['intake_year']) ?></p>
                                     <?php if (!empty($message)): ?>
                                         <p class="mt-3" style="color: <?= strpos($message, 'successfully') !== false ? 'green' : 'red'; ?>"><?= htmlspecialchars($message) ?></p>
@@ -354,10 +347,6 @@ $_SESSION['password_message'] = '';
                                         <div class="form-group">
                                             <label for="studentPhone">Phone</label>
                                             <input type="text" class="form-control" id="studentPhone" name="phone" value="<?= htmlspecialchars($personalInfo['no_tel']) ?>">
-                                        </div>
-                                        <div class="form-group">
-                                            <label for="studentIC">IC Number</label>
-                                            <input type="text" class="form-control" id="studentIC" name="no_ic" value="<?= htmlspecialchars($personalInfo['no_ic']) ?>">
                                         </div>
                                         <div class="form-group">
                                             <label for="studentIntakeYear">Intake Year</label>

@@ -18,7 +18,6 @@ $passwordMessage = $_SESSION['password_message'];
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_profile'])) {
     $name = $_POST['name'] ?? null;
     $phone = $_POST['phone'] ?? null;
-    $ic_number = $_POST['no_ic'] ?? null;
     $email = $_POST['email'] ?? null;
 
     $updates = [];
@@ -35,11 +34,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_profile'])) {
         $params[] = $phone;
         $types .= 's';
     }
-    if ($ic_number) {
-        $updates[] = "no_ic = ?";
-        $params[] = $ic_number;
-        $types .= 's';
-    }
+
     if ($email) {
         $updates[] = "email = ?";
         $params[] = $email;
@@ -142,7 +137,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['change_password'])) {
 }
 
 // Fetch lecturer data (including username and role_id)
-$sql = "SELECT l.full_name, l.email, l.no_tel, l.no_ic, l.profile_picture, l.username, l.role_id, r.role_name 
+$sql = "SELECT l.full_name, l.email, l.no_tel, l.profile_picture, l.username, l.role_id, r.role_name 
         FROM lecturers l 
         JOIN roles r ON l.role_id = r.id 
         WHERE l.id = ?";
@@ -161,7 +156,6 @@ $personalInfo = [
     'full_name' => $lecturer['full_name'] ?? 'N/A',
     'email' => $lecturer['email'] ?? 'N/A',
     'no_tel' => $lecturer['no_tel'] ?? 'N/A',
-    'no_ic' => $lecturer['no_ic'] ?? 'N/A',
     'profile_picture' => $lecturer['profile_picture'] ?? 'img/undraw_profile.svg',
     'role_name' => $lecturer['role_name'] ?? 'N/A',
     'username' => $lecturer['username'] ?? $lecturerID,
@@ -315,7 +309,6 @@ $_SESSION['password_message'] = '';
                                     <p><strong>Username:</strong> <?= htmlspecialchars($personalInfo['username']) ?></p>
                                     <p><strong>Email:</strong> <?= htmlspecialchars($personalInfo['email']) ?></p>
                                     <p><strong>Phone:</strong> <?= htmlspecialchars($personalInfo['no_tel']) ?></p>
-                                    <p><strong>IC Number:</strong> <?= htmlspecialchars($personalInfo['no_ic']) ?></p>
                                     <p><strong>Role:</strong> <?= htmlspecialchars($personalInfo['role_name']) ?></p>
                                     <?php if (!empty($message)): ?>
                                         <p class="mt-3" style="color: <?= strpos($message, 'successfully') !== false ? 'green' : 'red' ?>"><?= htmlspecialchars($message) ?></p>
@@ -373,10 +366,6 @@ $_SESSION['password_message'] = '';
                                         <div class="form-group">
                                             <label for="lecturerPhone">Phone</label>
                                             <input type="text" class="form-control" id="lecturerPhone" name="phone" value="<?= htmlspecialchars($personalInfo['no_tel']) ?>">
-                                        </div>
-                                        <div class="form-group">
-                                            <label for="lecturerIC">IC Number</label>
-                                            <input type="text" class="form-control" id="lecturerIC" name="no_ic" value="<?= htmlspecialchars($personalInfo['no_ic']) ?>">
                                         </div>
                                         <div class="form-group">
                                             <label for="lecturerRole">Role</label>

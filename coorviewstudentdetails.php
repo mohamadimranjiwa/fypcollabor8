@@ -39,7 +39,7 @@ $personalInfo = [
 $message = "";
 
 // Fetch semesters for the filter
-$semestersQuery = "SELECT semester_name FROM semesters ORDER BY semester_name DESC";
+$semestersQuery = "SELECT semester_name, start_date FROM semesters ORDER BY start_date DESC";
 $semestersResult = $conn->query($semestersQuery) or die("Error in semesters query: " . $conn->error);
 $semesters = $semestersResult->fetch_all(MYSQLI_ASSOC);
 
@@ -54,43 +54,51 @@ $selectedSemester = isset($_GET['semester']) && trim($_GET['semester']) !== '' ?
 $searchUsername = isset($_GET['username']) ? trim($_GET['username']) : '';
 $selectedGroup = isset($_GET['group_name']) ? trim($_GET['group_name']) : '';
 
-// Fetch group names for the filter, dependent on the selected semester
-$groupFilterQuery = "
-    SELECT DISTINCT g.name 
+// Fetch groups for the filter (semester-based)
+$groupsConditions = [];
+$groupsParams = [];
+$groupsParamTypes = "";
+
+$groupsConditions[] = "g.status = 'Approved'";
+
+if ($selectedSemester) {
+    $groupsConditions[] = "sem.semester_name = ?";
+    $groupsParams[] = $selectedSemester;
+    $groupsParamTypes .= "s";
+}
+
+$groupsQuery = "
+    SELECT DISTINCT g.name
     FROM groups g
-    JOIN group_members gm ON g.id = gm.group_id
-    JOIN students s ON gm.student_id = s.id
-    WHERE g.name IS NOT NULL";
-
-$groupFilterParams = [];
-$groupFilterParamTypes = "";
-
-if ($selectedSemester && $selectedSemester !== 'N/A') {
-    $groupFilterQuery .= " AND CONCAT(s.intake_month, ' ', s.intake_year) = ?";
-    $groupFilterParams[] = $selectedSemester;
-    $groupFilterParamTypes .= "s";
+    LEFT JOIN group_members gm ON g.id = gm.group_id
+    LEFT JOIN students s ON gm.student_id = s.id
+    LEFT JOIN semesters sem ON s.intake_year = YEAR(sem.start_date) AND s.intake_month = MONTHNAME(sem.start_date)";
+if (!empty($groupsConditions)) {
+    $groupsQuery .= " WHERE " . implode(" AND ", $groupsConditions);
 }
-
-$groupFilterQuery .= " ORDER BY g.name ASC";
-
-$stmtGroupsFilter = $conn->prepare($groupFilterQuery);
-if ($stmtGroupsFilter === false) {
-    die("Prepare failed for group filter query: " . $conn->error);
+$groupsQuery .= " ORDER BY g.name ASC";
+error_log("Groups Query: $groupsQuery");
+$stmt = $conn->prepare($groupsQuery);
+if ($stmt === false) {
+    die("Prepare failed for groups query: " . $conn->error);
 }
-if (!empty($groupFilterParams)) {
-    $stmtGroupsFilter->bind_param($groupFilterParamTypes, ...$groupFilterParams);
+if (!empty($groupsParams)) {
+    $stmt->bind_param($groupsParamTypes, ...$groupsParams);
 }
-$stmtGroupsFilter->execute();
-$groupsResult = $stmtGroupsFilter->get_result();
+$stmt->execute();
+$groupsResult = $stmt->get_result();
 $groups = $groupsResult->fetch_all(MYSQLI_ASSOC);
-$stmtGroupsFilter->close();
+$stmt->close();
 
 // Fetch total students
 $totalStudentsConditions = [];
 $totalStudentsParams = [];
 $totalStudentsParamTypes = "";
+
+$totalStudentsConditions[] = "g.status = 'Approved'";
+
 if ($selectedSemester) {
-    $totalStudentsConditions[] = "CONCAT(s.intake_month, ' ', s.intake_year) = ?";
+    $totalStudentsConditions[] = "sem.semester_name = ?";
     $totalStudentsParams[] = $selectedSemester;
     $totalStudentsParamTypes .= "s";
 }
@@ -104,12 +112,14 @@ if ($selectedGroup) {
     $totalStudentsParams[] = $selectedGroup;
     $totalStudentsParamTypes .= "s";
 }
+
 $totalStudentsQuery = "
     SELECT COUNT(DISTINCT s.id) AS total_students 
     FROM students s
     LEFT JOIN group_members gm ON s.id = gm.student_id
     LEFT JOIN groups g ON gm.group_id = g.id
-    LEFT JOIN projects p ON g.id = p.group_id";
+    LEFT JOIN projects p ON g.id = p.group_id
+    LEFT JOIN semesters sem ON s.intake_year = YEAR(sem.start_date) AND s.intake_month = MONTHNAME(sem.start_date)";
 if (!empty($totalStudentsConditions)) {
     $totalStudentsQuery .= " WHERE " . implode(" AND ", $totalStudentsConditions);
 }
@@ -129,9 +139,11 @@ $stmt->close();
 $totalProjectsConditions = [];
 $totalProjectsParams = [];
 $totalProjectsParamTypes = "";
+
 $totalProjectsConditions[] = "g.status = 'Approved'";
+
 if ($selectedSemester) {
-    $totalProjectsConditions[] = "CONCAT(s.intake_month, ' ', s.intake_year) = ?";
+    $totalProjectsConditions[] = "sem.semester_name = ?";
     $totalProjectsParams[] = $selectedSemester;
     $totalProjectsParamTypes .= "s";
 }
@@ -140,12 +152,14 @@ if ($selectedGroup) {
     $totalProjectsParams[] = $selectedGroup;
     $totalProjectsParamTypes .= "s";
 }
+
 $totalProjectsQuery = "
     SELECT COUNT(DISTINCT p.project_id) AS total_projects 
     FROM projects p
     JOIN groups g ON p.group_id = g.id
     LEFT JOIN group_members gm ON g.id = gm.group_id
-    LEFT JOIN students s ON gm.student_id = s.id";
+    LEFT JOIN students s ON gm.student_id = s.id
+    LEFT JOIN semesters sem ON s.intake_year = YEAR(sem.start_date) AND s.intake_month = MONTHNAME(sem.start_date)";
 if (!empty($totalProjectsConditions)) {
     $totalProjectsQuery .= " WHERE " . implode(" AND ", $totalProjectsConditions);
 }
@@ -153,7 +167,7 @@ $stmt = $conn->prepare($totalProjectsQuery);
 if ($stmt === false) {
     die("Prepare failed for total projects query: " . $conn->error);
 }
-if (!empty($totalStudentsParams)) {
+if (!empty($totalProjectsParams)) {
     $stmt->bind_param($totalProjectsParamTypes, ...$totalProjectsParams);
 }
 $stmt->execute();
@@ -161,12 +175,15 @@ $totalProjectsResult = $stmt->get_result();
 $totalProjects = ($totalProjectsResult && $row = $totalProjectsResult->fetch_assoc()) ? $row['total_projects'] : 0;
 $stmt->close();
 
-// Fetch student details with group ID and total evaluation grades
+// Fetch student details with group ID, total evaluation grades, and leader status
 $studentDetailsConditions = [];
 $studentDetailsParams = [];
 $studentDetailsParamTypes = "";
+
+$studentDetailsConditions[] = "g.status = 'Approved'";
+
 if ($selectedSemester) {
-    $studentDetailsConditions[] = "CONCAT(s.intake_month, ' ', s.intake_year) = ?";
+    $studentDetailsConditions[] = "sem.semester_name = ?";
     $studentDetailsParams[] = $selectedSemester;
     $studentDetailsParamTypes .= "s";
 }
@@ -180,18 +197,19 @@ if ($selectedGroup) {
     $studentDetailsParams[] = $selectedGroup;
     $studentDetailsParamTypes .= "s";
 }
+
 $studentDetailsQuery = "
     SELECT 
         s.id AS student_id,
         s.full_name,
         s.email,
         s.username,
-        s.no_ic,
         s.no_tel,
         s.intake_year,
         s.intake_month,
         g.id AS group_id,
         g.name AS group_name,
+        g.leader_id,
         ls.full_name AS supervisor_name,
         la.full_name AS assessor_name,
         (
@@ -204,11 +222,11 @@ $studentDetailsQuery = "
     LEFT JOIN groups g ON gm.group_id = g.id
     LEFT JOIN lecturers ls ON g.lecturer_id = ls.id
     LEFT JOIN lecturers la ON g.assessor_id = la.id
-";
+    LEFT JOIN semesters sem ON s.intake_year = YEAR(sem.start_date) AND s.intake_month = MONTHNAME(sem.start_date)";
 if (!empty($studentDetailsConditions)) {
     $studentDetailsQuery .= " WHERE " . implode(" AND ", $studentDetailsConditions);
 }
-$studentDetailsQuery .= " GROUP BY s.id, s.full_name, s.email, s.username, s.no_ic, s.no_tel, s.intake_year, s.intake_month, g.id, g.name, ls.full_name, la.full_name
+$studentDetailsQuery .= " GROUP BY s.id, s.full_name, s.email, s.username, s.no_tel, s.intake_year, s.intake_month, g.id, g.name, g.leader_id, ls.full_name, la.full_name
     ORDER BY s.full_name";
 $stmt = $conn->prepare($studentDetailsQuery);
 if ($stmt === false) {
@@ -222,7 +240,7 @@ $studentDetailsResult = $stmt->get_result();
 $studentDetails = $studentDetailsResult->fetch_all(MYSQLI_ASSOC);
 $stmt->close();
 
-// Fetch project, submission, and evaluation details for each group
+// Fetch project, submission, evaluation, and leader details for each group
 $groupDetails = [];
 foreach ($studentDetails as $detail) {
     if (!isset($groupDetails[$detail['group_id']]) && $detail['group_id']) {
@@ -257,6 +275,26 @@ foreach ($studentDetails as $detail) {
             'project_description' => 'N/A'
         ];
         $stmt->close();
+
+        // Fetch group leader
+        $leaderQuery = "
+            SELECT s.full_name
+            FROM students s
+            JOIN groups g ON s.id = g.leader_id
+            WHERE g.id = ?";
+        $stmt = $conn->prepare($leaderQuery);
+        if ($stmt === false) {
+            error_log("Prepare failed for leader query: " . $conn->error);
+            $message .= "<div class='alert alert-warning'>Warning: Failed to fetch leader for group ID {$detail['group_id']}.</div>";
+            $leaderName = 'Not Assigned';
+        } else {
+            $stmt->bind_param("i", $detail['group_id']);
+            $stmt->execute();
+            $leaderResult = $stmt->get_result();
+            $leader = $leaderResult->fetch_assoc();
+            $leaderName = $leader ? $leader['full_name'] : 'Not Assigned';
+            $stmt->close();
+        }
 
         // Fetch submissions
         $submissionsConditions = [];
@@ -323,7 +361,7 @@ foreach ($studentDetails as $detail) {
                 $submission['submitter_name'] = $submission['submitter_name'] ?? 'N/A';
             }
         }
-        unset($submission); // Unset reference to avoid issues
+        unset($submission);
 
         // Fetch evaluation details (individual and group)
         $evaluationsQuery = "
@@ -337,17 +375,16 @@ foreach ($studentDetails as $detail) {
                 e.date,
                 'Individual' AS type,
                 d.name AS deliverable_name,
-                COALESCE(c.full_name, ls.full_name, la.full_name, 'N/A') AS marker_name
+                COALESCE(ls.full_name, la.full_name, c.full_name, 'N/A') AS marker_name
             FROM evaluation e
             JOIN deliverables d ON e.deliverable_id = d.id
-            LEFT JOIN coordinators c ON e.coordinator_id = c.id
             LEFT JOIN lecturers ls ON e.supervisor_id = ls.id
             LEFT JOIN lecturers la ON e.assessor_id = la.id
+            LEFT JOIN coordinators c ON e.coordinator_id = c.id
             WHERE e.student_id IN (
                 SELECT student_id FROM group_members WHERE group_id = ?
-            )";
-        $evaluationsQuery .= "
-            GROUP BY e.id, e.student_id, e.evaluation_grade, e.feedback, e.date, d.name, c.full_name, ls.full_name, la.full_name
+            )
+            GROUP BY e.id, e.student_id, e.evaluation_grade, e.feedback, e.date, d.name, ls.full_name, la.full_name, c.full_name
             
             UNION ALL
             
@@ -367,8 +404,7 @@ foreach ($studentDetails as $detail) {
             LEFT JOIN coordinators c ON ge.coordinator_id = c.id
             LEFT JOIN lecturers ls ON ge.supervisor_id = ls.id
             LEFT JOIN lecturers la ON ge.assessor_id = la.id
-            WHERE ge.group_id = ?";
-        $evaluationsQuery .= "
+            WHERE ge.group_id = ?
             GROUP BY ge.id, ge.group_id, ge.evaluation_grade, ge.feedback, ge.date, d.name, c.full_name, ls.full_name, la.full_name
             ORDER BY date DESC";
         error_log("Evaluations Query for group ID {$detail['group_id']}: $evaluationsQuery");
@@ -390,7 +426,8 @@ foreach ($studentDetails as $detail) {
             'project_title' => $project['project_title'],
             'project_description' => $project['project_description'],
             'submissions' => $submissions,
-            'evaluations' => $evaluations
+            'evaluations' => $evaluations,
+            'leader_name' => $leaderName
         ];
     }
 }
@@ -418,9 +455,10 @@ $conn->close();
     <link href="vendor/fontawesome-free/css/all.min.css" rel="stylesheet" type="text/css">
     <link href="https://fonts.googleapis.com/css?family=Nunito:200,200i,300,300i,400,400i,600,600i,700,700i,800,800i,900,900i" rel="stylesheet">
     <link href="css/sb-admin-2.min.css" rel="stylesheet">
+    <link href="css/sb-admin-2.css" rel="stylesheet">
     <link href="vendor/datatables/dataTables.bootstrap4.min.css" rel="stylesheet">
 
-    <!-- Custom CSS for modal and icon -->
+    <!-- Custom CSS for modal, icon, and leader indicator -->
     <style>
         .info-icon {
             cursor: pointer;
@@ -436,6 +474,14 @@ $conn->close();
         .modal-body h6 {
             margin-top: 1.5rem;
             margin-bottom: 0.5rem;
+        }
+        .modal-header {
+            background-color: #f8f9fa;
+        }
+        .leader-indicator {
+            color: red;
+            font-weight: bold;
+            margin-left: 5px;
         }
     </style>
 </head>
@@ -486,7 +532,6 @@ $conn->close();
                         <a class="collapse-item active" href="coorviewstudentdetails.php">View Student Details</a>
                         <a class="collapse-item" href="coormanagerubrics.php">Manage Rubrics</a>
                         <a class="collapse-item" href="coorassignassessment.php">Assign Assessment</a>
-                        <!-- <a class="collapse-item" href="coorevaluatestudent.php">Evaluate Students</a> -->
                     </div>
                 </div>
             </li>
@@ -501,7 +546,6 @@ $conn->close();
                         <h6 class="collapse-header">Support Tools:</h6>
                         <a class="collapse-item" href="coormanageannouncement.php">Manage Announcement</a>
                         <a class="collapse-item" href="coormanageteachingmaterials.php">Manage Teaching <br>Materials</a>
-                        <!-- <a class="collapse-item" href="coorsetsemester.php">Manage Semester</a> -->
                     </div>
                 </div>
             </li>
@@ -617,10 +661,10 @@ $conn->close();
                         </div>
                     </div>
 
-                    <!-- Filters Card -->
+                    <!-- Filter Card -->
                     <div class="card shadow mb-4">
                         <div class="card-header py-3">
-                            <h6 class="m-0 font-weight-bold text-primary">Filter Students</h6>
+                            <h6 class="m-0 font-weight-bold text-primary">Filter Student Details</h6>
                         </div>
                         <div class="card-body">
                             <form method="GET" action="">
@@ -676,7 +720,6 @@ $conn->close();
                                             <th>Full Name</th>
                                             <th>Email</th>
                                             <th>Username</th>
-                                            <th>IC Number</th>
                                             <th>Phone Number</th>
                                             <th>Intake Year</th>
                                             <th>Intake Month</th>
@@ -697,14 +740,19 @@ $conn->close();
                                                     'project_title' => 'N/A',
                                                     'project_description' => 'N/A',
                                                     'submissions' => [],
-                                                    'evaluations' => []
+                                                    'evaluations' => [],
+                                                    'leader_name' => 'Not Assigned'
                                                 ];
                                                 $submissionsJson = json_encode($groupInfo['submissions']);
                                                 $evaluationsJson = json_encode($groupInfo['evaluations']);
+                                                $leaderNameJson = json_encode($groupInfo['leader_name']);
                                                 ?>
                                                 <tr>
                                                     <td>
                                                         <?= htmlspecialchars($detail['full_name']) ?>
+                                                        <?php if ($detail['leader_id'] == $studentId): ?>
+                                                            <span class="leader-indicator">(L)</span>
+                                                        <?php endif; ?>
                                                         <?php if ($groupId > 0): ?>
                                                             <i class="fas fa-info-circle info-icon"
                                                                data-toggle="modal"
@@ -715,12 +763,12 @@ $conn->close();
                                                                data-project-title="<?= htmlspecialchars($groupInfo['project_title']) ?>"
                                                                data-project-description="<?= htmlspecialchars($groupInfo['project_description']) ?>"
                                                                data-submissions='<?= htmlspecialchars($submissionsJson) ?>'
-                                                               data-evaluations='<?= htmlspecialchars($evaluationsJson) ?>'></i>
+                                                               data-evaluations='<?= htmlspecialchars($evaluationsJson) ?>'
+                                                               data-leader-name='<?= htmlspecialchars($leaderNameJson) ?>'></i>
                                                         <?php endif; ?>
                                                     </td>
                                                     <td><?= htmlspecialchars($detail['email']) ?></td>
                                                     <td><?= htmlspecialchars($detail['username']) ?></td>
-                                                    <td><?= htmlspecialchars($detail['no_ic'] ?? 'N/A') ?></td>
                                                     <td><?= htmlspecialchars($detail['no_tel'] ?? 'N/A') ?></td>
                                                     <td><?= htmlspecialchars($detail['intake_year'] ?? 'N/A') ?></td>
                                                     <td><?= htmlspecialchars($detail['intake_month'] ?? 'N/A') ?></td>
@@ -731,7 +779,7 @@ $conn->close();
                                                 </tr>
                                             <?php endforeach; ?>
                                         <?php else: ?>
-                                            <tr><td colspan="11" class="text-center">No students found.</td></tr>
+                                            <tr><td colspan="10" class="text-center">No students found.</td></tr>
                                         <?php endif; ?>
                                     </tbody>
                                 </table>
@@ -779,7 +827,8 @@ $conn->close();
     </div>
 
     <!-- Group Details Modal -->
-    <div class="modal fade" id="groupModal" tabindex="-1" role="dialog" aria-labelledby="groupModalLabel" aria-hidden="true">
+    <div class="modal fade" id="groupModal" tabindex="-1" role="dialog" aria-labelledby="groupModalLabel"
+        aria-hidden="true">
         <div class="modal-dialog modal-lg" role="document">
             <div class="modal-content">
                 <div class="modal-header">
@@ -810,31 +859,34 @@ $conn->close();
                                 <td>Project Description</td>
                                 <td id="modal-project-description"></td>
                             </tr>
+                            <tr>
+                                <td>Group Leader</td>
+                                <td id="modal-leader-name"></td>
+                            </tr>
                         </tbody>
                     </table>
                     <h6>Submissions</h6>
                     <table class="table table-bordered">
                         <thead>
                             <tr>
-                                <th>Deliverable Name</th>
+                                <th>Name</th>
                                 <th>Submitter</th>
-                                <th>File</th>
+                                <th>File Name</th>
                                 <th>Submitted At</th>
                                 <th>Type</th>
                             </tr>
                         </thead>
-                        <tbody id="modal-submissions"></tbody>
+                        <tbody id="modal-submissions-result"></tbody>
                     </table>
-                    <h6>Marking Details</h6>
+                    <h6>Markings</h6>
                     <table class="table table-bordered">
                         <thead>
                             <tr>
-                                <th>Deliverable Name</th>
+                                <th>Name</th>
                                 <th>Marker</th>
                                 <th>Type</th>
                                 <th>Grade</th>
                                 <th>Feedback</th>
-                                <th>Score</th>
                                 <th>Date</th>
                             </tr>
                         </thead>
@@ -876,32 +928,38 @@ $conn->close();
             var projectDescription = $(this).data('project-description');
             var submissions = $(this).data('submissions');
             var evaluations = $(this).data('evaluations');
+            var leaderName = $(this).data('leader-name');
 
             console.log('Student ID:', studentId);
             console.log('Group ID:', groupId);
             console.log('Group Name:', groupName);
             console.log('Submissions:', submissions);
             console.log('Evaluations:', evaluations);
+            console.log('Leader Name:', leaderName);
 
             // Populate group information
             $('#modal-group-name').text(groupName || 'N/A');
             $('#modal-project-title').text(projectTitle || 'N/A');
-            $('#modal-project-description').text(projectDescription || 'N/A');
+            $('#modal-project-description').text(projectDescription || '');
+            $('#modal-leader-name').text(leaderName ? JSON.parse(leaderName) : 'Not Assigned');
 
             // Populate submissions table
-            var submissionsTable = $('#modal-submissions');
+            var submissionsTable = $('#modal-submissions-result');
             submissionsTable.empty();
             if (submissions && Array.isArray(submissions) && submissions.length > 0) {
                 submissions.forEach(function(submission) {
                     if (submission.submission_type === 'group' || 
                         (submission.submission_type === 'individual' && submission.student_id == studentId)) {
-                        var submittedAt = submission.submitted_at ? new Date(submission.submitted_at).toLocaleString() : 'Not Submitted';
+                        var submittedAt = submission.submitted_at ? 
+                            new Date(submission.submitted_at).toLocaleString() : 'Not Submitted';
                         var submitter = submission.submission_type === 'group' ? 
                             (submission.group_members && submission.group_members.length > 0 ? 
                                 submission.group_members.join(', ') : 'Group Members N/A') : 
                             (submission.submitter_name || 'N/A');
+                        var fileName = submission.file_path ? 
+                            submission.file_path.split('/').pop() : 'No File';
                         var fileLink = submission.file_path ? 
-                            `<a href="${submission.file_path}" target="_blank">${submission.file_path.split('/').pop()}</a>` : 
+                            `<a href="${submission.file_path}" target="_blank">${fileName}</a>` : 
                             'No File';
                         var row = `
                             <tr>
@@ -916,7 +974,7 @@ $conn->close();
                     }
                 });
                 if (submissionsTable.children().length === 0) {
-                    submissionsTable.append('<tr><td colspan="5">No relevant submissions found.</td></tr>');
+                    submissionsTable.append('<tr><td colspan="5">No submissions found.</td></tr>');
                 }
             } else {
                 console.log('No submissions data or invalid format');
@@ -930,76 +988,39 @@ $conn->close();
             if (evaluations && Array.isArray(evaluations) && evaluations.length > 0) {
                 var hasEvaluations = false;
                 evaluations.forEach(function(evaluation, index) {
-                    console.log(`Processing evaluation ${index}:`, evaluation);
-                    // Display individual evaluations for the student or group evaluations for the group
+                    console.log(`Processing evaluation[${index}]:`, evaluation);
                     if ((evaluation.student_id == studentId) || (evaluation.group_id == groupId)) {
                         hasEvaluations = true;
                         var evalDate = evaluation.date ? new Date(evaluation.date).toLocaleDateString() : 'N/A';
                         var grade = evaluation.evaluation_grade !== null && evaluation.evaluation_grade !== undefined ? 
-                            parseFloat(evaluation.evaluation_grade).toFixed(2) : 'N/A';
+                            Number(evaluation.evaluation_grade).toFixed(2) : 'N/A';
                         var row = `
                             <tr>
                                 <td>${evaluation.deliverable_name || 'N/A'}</td>
                                 <td>${evaluation.marker_name || 'N/A'}</td>
-                                <td>${evaluation.type}</td>
+                                <td>${evaluation.type || 'N/A'}</td>
                                 <td>${grade}</td>
                                 <td>${evaluation.feedback || 'No feedback provided'}</td>
-                                <td>${grade}</td>
                                 <td>${evalDate}</td>
                             </tr>
                         `;
                         evaluationsTable.append(row);
                         console.log(`Added evaluation row for student ID ${studentId} or group ID ${groupId}:`, evaluation);
                     } else {
-                        console.log(`Skipping evaluation ${index}: student_id ${evaluation.student_id} does not match modal studentId ${studentId}, and group_id ${evaluation.group_id} does not match modal groupId ${groupId}`);
+                        console.log(`Skipped evaluation[${index}]: student_id[${evaluation.student_id}] does not match studentId[${studentId}], and group_id[${evaluation.group_id}] does not match groupId[${groupId}]`);
                     }
                 });
                 if (!hasEvaluations) {
-                    evaluationsTable.append('<tr><td colspan="7">No evaluations found for this student or group.</td></tr>');
+                    evaluationsTable.append('<tr><td colspan="6">No evaluations found for this student or group.</td></tr>');
                     console.log('No evaluations matched student ID:', studentId, 'or group ID:', groupId);
                 }
             } else {
-                console.log('No evaluations data received or invalid format');
-                evaluationsTable.append('<tr><td colspan="7">No evaluations found.</td></tr>');
+                console.log('No evaluation data received or invalid format');
+                evaluationsTable.append('<tr><td colspan="6">No evaluations found.</td></tr>');
             }
         });
     });
     </script>
 
-    <!-- Function to handle filter changes and update URL -->
-    <script>
-    function handleFilterChange() {
-        const semester = $('#semester').val();
-        const username = $('#username').val();
-        const groupName = $('#group_name').val();
-        let url = 'coorviewstudentdetails.php?';
-        if (semester) url += `semester=${encodeURIComponent(semester)}&`;
-        if (username) url += `username=${encodeURIComponent(username)}&`;
-        if (groupName) url += `group_name=${encodeURIComponent(groupName)}&`;
-        // Remove trailing & or ?
-        url = url.endsWith('&') || url.endsWith('?') ? url.slice(0, -1) : url;
-        window.location.href = url;
-    }
-
-    // Attach event listeners
-    $('#semester, #username, #group_name').on('change', function(event) {
-        if (this.tagName === 'SELECT' || (this.id === 'username' && event.key === 'Enter')) {
-            handleFilterChange();
-        }
-    });
-    $('#username').on('keypress', function(event) {
-        if (event.key === 'Enter') {
-            event.preventDefault();
-            handleFilterChange();
-        }
-    });
-
-    $('#filterButton').on('click', function() {
-        handleFilterChange();
-    });
-
-    // Preserve scroll position on reload for filters
-    // ... existing code ...
-    </script>
 </body>
 </html>

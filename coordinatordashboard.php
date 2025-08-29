@@ -21,6 +21,9 @@ if (isset($_POST['action']) && $_POST['action'] == 'get_student_details') {
         echo json_encode(['error' => 'Invalid student ID']);
         exit();
     }
+    
+    error_log("Coordinator Dashboard: Fetching details for student ID: " . $student_id);
+    
     $response = [];
     // Fetch student details
     $stmt = $conn->prepare("
@@ -29,6 +32,7 @@ if (isset($_POST['action']) && $_POST['action'] == 'get_student_details') {
         WHERE s.id = ?
     ");
     if ($stmt === false) {
+        error_log("Coordinator Dashboard: Student query preparation failed: " . $conn->error);
         echo json_encode(['error' => 'Query preparation failed']);
         exit();
     }
@@ -37,7 +41,9 @@ if (isset($_POST['action']) && $_POST['action'] == 'get_student_details') {
     $result = $stmt->get_result();
     if ($row = $result->fetch_assoc()) {
         $response['student'] = $row;
+        error_log("Coordinator Dashboard: Found student: " . json_encode($row));
     } else {
+        error_log("Coordinator Dashboard: No student found with ID: " . $student_id);
         echo json_encode(['error' => 'Student not found']);
         $stmt->close();
         exit();
@@ -52,6 +58,7 @@ if (isset($_POST['action']) && $_POST['action'] == 'get_student_details') {
         WHERE gm.student_id = ?
     ");
     if ($stmt === false) {
+        error_log("Coordinator Dashboard: Group query preparation failed: " . $conn->error);
         echo json_encode(['error' => 'Group query preparation failed']);
         exit();
     }
@@ -60,6 +67,9 @@ if (isset($_POST['action']) && $_POST['action'] == 'get_student_details') {
     $result = $stmt->get_result();
     if ($row = $result->fetch_assoc()) {
         $response['group'] = $row;
+        error_log("Coordinator Dashboard: Found group: " . json_encode($row));
+    } else {
+        error_log("Coordinator Dashboard: No group found for student ID: " . $student_id);
     }
     $stmt->close();
     // Fetch group members
@@ -73,6 +83,7 @@ if (isset($_POST['action']) && $_POST['action'] == 'get_student_details') {
             ORDER BY s.full_name
         ");
         if ($stmt === false) {
+            error_log("Coordinator Dashboard: Group members query preparation failed: " . $conn->error);
             echo json_encode(['error' => 'Group members query preparation failed']);
             exit();
         }
@@ -83,8 +94,11 @@ if (isset($_POST['action']) && $_POST['action'] == 'get_student_details') {
         while ($row = $result->fetch_assoc()) {
             $response['group_members'][] = $row['full_name'];
         }
+        error_log("Coordinator Dashboard: Found " . count($response['group_members']) . " group members");
         $stmt->close();
     }
+    
+    error_log("Coordinator Dashboard: Final response: " . json_encode($response));
     echo json_encode($response);
     exit();
 }
@@ -158,7 +172,7 @@ $stmt->close();
 
 // Fetch Student Details
 $studentDetailsQuery = "
-    SELECT s.username AS student_id, s.full_name AS student_name, g.name AS group_name, 
+    SELECT s.id AS student_id, s.username AS student_username, s.full_name AS student_name, g.name AS group_name, 
            p.title AS project_title, p.description AS project_description,
            s.intake_year, s.intake_month
     FROM students s 
@@ -166,15 +180,12 @@ $studentDetailsQuery = "
     JOIN groups g ON gm.group_id = g.id 
     LEFT JOIN projects p ON g.id = p.group_id 
     WHERE g.status = 'Approved'
-    AND s.intake_year = YEAR(?)
-    AND s.intake_month = MONTHNAME(?)
     ORDER BY s.full_name";
 $stmt = $conn->prepare($studentDetailsQuery);
 if (!$stmt) {
     error_log("Student Details Query preparation failed: " . $conn->error);
     die("Prepare failed (Student Details): " . $conn->error);
 }
-$stmt->bind_param("ss", $currentSemester['start_date'], $currentSemester['start_date']);
 $stmt->execute();
 $studentDetailsResult = $stmt->get_result();
 $studentDetails = $studentDetailsResult->fetch_all(MYSQLI_ASSOC);
@@ -533,6 +544,7 @@ $conn->close();
                                             <thead>
                                                 <tr>
                                                     <th>Student ID</th>
+                                                    <th>Username</th>
                                                     <th>Name</th>
                                                     <th>Group Name</th>
                                                     <th>Project Title</th>
@@ -544,6 +556,7 @@ $conn->close();
                                                     <?php foreach ($studentDetails as $row): ?>
                                                         <tr>
                                                             <td><?= htmlspecialchars($row['student_id']) ?></td>
+                                                            <td><?= htmlspecialchars($row['student_username']) ?></td>
                                                             <td>
                                                                 <?= htmlspecialchars($row['student_name']) ?>
                                                                 <i class="fas fa-info-circle info-icon"
@@ -558,7 +571,7 @@ $conn->close();
                                                     <?php endforeach; ?>
                                                 <?php else: ?>
                                                     <tr>
-                                                        <td colspan="5" class="text-center">No student details available.</td>
+                                                        <td colspan="6" class="text-center">No student details available.</td>
                                                     </tr>
                                                 <?php endif; ?>
                                             </tbody>
@@ -685,6 +698,7 @@ $conn->close();
         $(document).ready(function() {
             $('.info-icon').on('click', function() {
                 var studentId = $(this).data('student-id');
+                console.log('Coordinator Dashboard: Info icon clicked for student ID:', studentId);
 
                 $.ajax({
                     url: window.location.href,
@@ -695,7 +709,10 @@ $conn->close();
                     },
                     dataType: 'json',
                     success: function(response) {
+                        console.log('Coordinator Dashboard: AJAX response received:', response);
+                        
                         if (response.error) {
+                            console.error('Coordinator Dashboard: Error in response:', response.error);
                             alert('Error: ' + response.error);
                             return;
                         }
@@ -714,8 +731,9 @@ $conn->close();
                         $('#studentModal').modal('show');
                     },
                     error: function(xhr, status, error) {
-                        console.error('AJAX error:', status, error);
-                        alert('Error fetching student details.');
+                        console.error('Coordinator Dashboard: AJAX error:', status, error);
+                        console.error('Coordinator Dashboard: Response text:', xhr.responseText);
+                        alert('Error fetching student details. Check console for details.');
                     }
                 });
             });
