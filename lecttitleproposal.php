@@ -612,7 +612,7 @@ $current_page = basename($_SERVER['PHP_SELF']);
                                     <div class="col-md-4 mb-3">
                                         <label for="username">Username</label>
                                         <input type="text" class="form-control" id="username" name="username" 
-                                               value="<?php echo htmlspecialchars($searchUsername); ?>" placeholder="Search here">
+                                               value="<?php echo htmlspecialchars($searchUsername); ?>" placeholder="Enter student username">
                                     </div>
                                     <!-- Group Number Input -->
                                     <div class="col-md-4 mb-3">

@@ -58,10 +58,32 @@ $semesters = $semestersResult->fetch_all(MYSQLI_ASSOC);
 $selectedSemester = isset($_GET['semester']) && !empty($_GET['semester']) ? trim($_GET['semester']) : $currentSemester;
 $searchUsername = isset($_GET['username']) ? trim($_GET['username']) : '';
 $selectedDeliverable = isset($_GET['deliverable_id']) && is_numeric($_GET['deliverable_id']) ? intval($_GET['deliverable_id']) : 0;
-$selectedGroup = isset($_GET['group_id']) && is_numeric($_GET['group_id']) ? intval($_GET['group_id']) : 0;
+$groupNumberInput = isset($_GET['group_number']) ? trim($_GET['group_number']) : '';
+
+// Derive group name prefix from selected semester
+$semesterParts = explode(' ', $selectedSemester);
+$semesterMonth = $semesterParts[0] ?? 'May';
+$semesterYear = $semesterParts[1] ?? '2025';
+$groupPrefix = $semesterYear . $semesterMonth;
+
+// Extract numeric suffix from group_number input
+$groupNumber = '';
+if ($groupNumberInput) {
+    // Remove prefix if full group name is provided (e.g., '2025August001' -> '001')
+    if (strpos($groupNumberInput, $groupPrefix) === 0) {
+        $groupNumber = substr($groupNumberInput, strlen($groupPrefix));
+    } else {
+        $groupNumber = $groupNumberInput; // Assume input is just the number
+    }
+    $groupNumber = preg_replace('/[^0-9]/', '', $groupNumber); // Keep only digits
+}
+$selectedGroupName = $groupNumber ? $groupPrefix . str_pad($groupNumber, 3, '0', STR_PAD_LEFT) : '';
+
+// Initialize input value for the form
+$groupNumberDisplay = $groupNumber ? $groupPrefix . str_pad($groupNumber, 3, '0', STR_PAD_LEFT) : '';
 
 // Debug filter values
-error_log("Filters: Semester=$selectedSemester, Deliverable=$selectedDeliverable, Group=$selectedGroup, Username=$searchUsername");
+error_log("Filters: Semester=$selectedSemester, Deliverable=$selectedDeliverable, GroupName=$selectedGroupName, Username=$searchUsername");
 
 // Fetch deliverables for the filter - simplified query
 $deliverablesQuery = "SELECT id, name FROM deliverables WHERE semester = ? ORDER BY name ASC";
@@ -75,31 +97,9 @@ $deliverablesResult = $deliverablesStmt->get_result();
 $deliverables = $deliverablesResult->fetch_all(MYSQLI_ASSOC);
 $deliverablesStmt->close();
 
-// Fetch groups for the filter - simplified query
-$groupsQuery = "
-    SELECT DISTINCT g.id, g.name 
-    FROM groups g 
-    LEFT JOIN students s_leader ON g.leader_id = s_leader.id 
-    WHERE g.lecturer_id = ? 
-    AND s_leader.intake_month = SUBSTRING_INDEX(?, ' ', 1)
-    AND s_leader.intake_year = CAST(SUBSTRING_INDEX(?, ' ', -1) AS UNSIGNED)
-    ORDER BY g.name ASC";
-$groupsStmt = $conn->prepare($groupsQuery);
-if ($groupsStmt === false) {
-    die("Prepare failed (Groups Query): " . $conn->error);
-}
-$groupsStmt->bind_param("iss", $lecturerID, $selectedSemester, $selectedSemester);
-$groupsStmt->execute();
-$groupsResult = $groupsStmt->get_result();
-$groups = $groupsResult->fetch_all(MYSQLI_ASSOC);
-$groupsStmt->close();
-
-// Debug: Check if deliverables or groups are empty
+// Debug: Check if deliverables are empty
 if (empty($deliverables)) {
     $message .= "<div class='alert alert-warning'>No deliverables found for semester: " . htmlspecialchars($selectedSemester) . "</div>";
-}
-if (empty($groups)) {
-    $message .= "<div class='alert alert-warning'>No groups found for semester: " . htmlspecialchars($selectedSemester) . "</div>";
 }
 
 // Simplified submissions query - build it step by step
@@ -174,18 +174,21 @@ if ($selectedDeliverable > 0) {
     $paramTypes .= "i";
 }
 
-if ($selectedGroup > 0) {
-    $additionalConditions[] = "g.id = ?";
-    $params[] = $selectedGroup;
-    $paramTypes .= "i";
+if ($selectedGroupName) {
+    $additionalConditions[] = "g.name = ?";
+    $params[] = $selectedGroupName;
+    $paramTypes .= "s";
 }
 
 if ($searchUsername) {
-    $additionalConditions[] = "(g.name LIKE ? OR s.full_name LIKE ? OR s.username LIKE ?)";
+    $additionalConditions[] = "(
+        (d.submission_type = 'individual' AND s.username LIKE ?)
+        OR
+        (d.submission_type = 'group' AND EXISTS (SELECT 1 FROM group_members gm2 JOIN students s2 ON gm2.student_id = s2.id WHERE gm2.group_id = g.id AND s2.username LIKE ?))
+    )";
     $params[] = "%$searchUsername%";
     $params[] = "%$searchUsername%";
-    $params[] = "%$searchUsername%";
-    $paramTypes .= "sss";
+    $paramTypes .= "ss";
 }
 
 // Add additional conditions to query
@@ -498,16 +501,10 @@ $conn->close();
                                         </select>
                                     </div>
                                     <div class="col-md-3 mb-3">
-                                        <label for="group_id">Group</label>
-                                        <select class="form-control" id="group_id" name="group_id">
-                                            <option value="0" <?= $selectedGroup === 0 ? 'selected' : '' ?>>-- All Groups --</option>
-                                            <?php foreach ($groups as $group): ?>
-                                                <option value="<?= $group['id'] ?>" 
-                                                        <?= $selectedGroup === $group['id'] ? 'selected' : '' ?>>
-                                                    <?= htmlspecialchars($group['name']) ?>
-                                                </option>
-                                            <?php endforeach; ?>
-                                        </select>
+                                        <label for="group_number">Group Name</label>
+                                        <input type="text" class="form-control" id="group_number" name="group_number" 
+                                               value="<?= htmlspecialchars($groupNumberDisplay); ?>" 
+                                               placeholder="<?= htmlspecialchars($groupPrefix); ?>XXX">
                                     </div>
                                 </div>
                                 <button type="submit" class="btn btn-primary">Apply Filters</button>
@@ -1048,6 +1045,48 @@ $conn->close();
                 }
             });
         }
+
+        // Update group number input when semester changes
+        document.getElementById('semester').addEventListener('change', function() {
+            const semester = this.value;
+            const [month, year] = semester.split(' ');
+            const prefix = year + month;
+            const input = document.getElementById('group_number');
+            const currentValue = input.value;
+            const number = currentValue.replace(/^\d{4}[A-Za-z]+/, ''); // Extract number
+            input.value = number ? prefix + number : '';
+            input.placeholder = prefix + 'XXX';
+        });
+
+        // Initialize input on page load
+        window.addEventListener('load', function() {
+            const semester = document.getElementById('semester').value;
+            const [month, year] = semester.split(' ');
+            const prefix = year + month;
+            const input = document.getElementById('group_number');
+            const currentValue = input.value;
+            if (!currentValue) {
+                input.value = '';
+            } else if (!currentValue.startsWith(prefix)) {
+                const number = currentValue.replace(/^\d{4}[A-Za-z]+/, '');
+                input.value = number ? prefix + number : '';
+            }
+            input.placeholder = prefix + 'XXX';
+        });
+
+        // Ensure only valid input (prefix + number or number alone)
+        document.getElementById('group_number').addEventListener('input', function() {
+            const semester = document.getElementById('semester').value;
+            const [month, year] = semester.split(' ');
+            const prefix = year + month;
+            let value = this.value;
+            // Allow user to enter number or full group name
+            if (value && !value.startsWith(prefix)) {
+                // If input doesn't start with prefix, assume it's a number
+                value = prefix + value.replace(/[^0-9]/g, '');
+                this.value = value;
+            }
+        });
     </script>
 </body>
 </html>
