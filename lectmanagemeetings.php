@@ -46,7 +46,6 @@ if (isset($_POST['lecturer_id']) && !isset($_POST['action'])) {
     header('Content-Type: application/json');
     $lecturerID = intval($_POST['lecturer_id']);
     $selectedSemester = isset($_POST['semester']) && trim($_POST['semester']) !== '' ? trim($_POST['semester']) : $currentSemesterName;
-    // MODIFIED: Only apply status filter for 'Confirmed'
     $selectedStatus = isset($_POST['status']) && trim($_POST['status']) === 'Confirmed' ? 'Confirmed' : null;
     $meetings = [];
 
@@ -60,7 +59,6 @@ if (isset($_POST['lecturer_id']) && !isset($_POST['action'])) {
         $meetingsParamTypes .= "s";
     }
 
-    // MODIFIED: Apply status filter only for 'Confirmed'; ignore for 'Pending' or null
     if ($selectedStatus) {
         $meetingsConditions[] = "m.status = ?";
         $meetingsParams[] = $selectedStatus;
@@ -89,7 +87,6 @@ if (isset($_POST['lecturer_id']) && !isset($_POST['action'])) {
         error_log("Prepare failed (AJAX Meetings): " . $conn->error);
     }
 
-    // Debug: Log AJAX response
     error_log("AJAX response for lecturer_id $lecturerID, semester $selectedSemester, status " . ($selectedStatus ?? 'null') . ": " . json_encode($meetings));
 
     echo json_encode($meetings);
@@ -163,7 +160,6 @@ if ($selectedSemester) {
     $meetingsParamTypes .= "s";
 }
 
-// MODIFIED: Apply status filter for both Confirmed and Pending in the table
 if ($selectedStatus) {
     $meetingsConditions[] = "m.status = ?";
     $meetingsParams[] = $selectedStatus;
@@ -194,7 +190,10 @@ if ($stmt) {
 }
 
 // Filter confirmed meetings for the "Upcoming Meetings" section
-$confirmedMeetings = array_filter($meetings, fn($meeting) => $meeting['status'] === 'Confirmed');
+$today = date('Y-m-d');
+$confirmedMeetings = array_filter($meetings, fn($meeting) => 
+    $meeting['status'] === 'Confirmed' && strtotime($meeting['meeting_date']) >= strtotime($today)
+);
 $upcomingMeetingsCount = count($confirmedMeetings);
 
 // Filter past meetings (meetings before today)
@@ -268,7 +267,6 @@ $conn->close();
                         <h6 class="collapse-header">Guidance Resources:</h6>
                         <a class="collapse-item active <?= !$isSupervisor ? 'disabled' : '' ?>" href="lectmanagemeetings.php">Manage Meetings</a>
                         <a class="collapse-item <?= !$isSupervisor ? 'disabled' : '' ?>" href="lectviewdiary.php">View Student Diary</a>
-                        <?php /* <a class="collapse-item <?= !$isSupervisor ? 'disabled' : '' ?>" href="lectevaluatestudent.php">Evaluate Students</a> */ ?>
                         <a class="collapse-item <?= !$isSupervisor ? 'disabled' : '' ?>" href="lectviewstudentdetails.php">View Student Details</a>
                     </div>
                 </div>
@@ -283,7 +281,6 @@ $conn->close();
                 <div id="collapsePages" class="collapse" aria-labelledby="headingPages" data-parent="#accordionSidebar">
                     <div class="bg-white py-2 collapse-inner rounded">
                         <h6 class="collapse-header">Performance Review:</h6>
-                        <?php /* <a class="collapse-item <?= !$isAssessor ? 'disabled' : '' ?>" href="assevaluatestudent.php">Evaluate Students</a> */ ?>
                         <a class="collapse-item <?= !$isAssessor ? 'disabled' : '' ?>" href="assviewstudentdetails.php">View Student Details</a>
                         <div class="collapse-divider"></div>
                         <h6 class="collapse-header">Component Analysis:</h6>
@@ -406,7 +403,6 @@ $conn->close();
                                                     <?php endforeach; ?>
                                                 </select>
                                             </div>
-                                            <!-- MODIFIED: Status dropdown with Confirmed and Pending only -->
                                             <div class="col-md-6 mb-3">
                                                 <label for="status">Status</label>
                                                 <select class="form-control" id="status" name="status">
@@ -540,7 +536,6 @@ $conn->close();
                 initialView: 'dayGridMonth',
                 height: 'auto',
                 events: function(fetchInfo, successCallback, failureCallback) {
-                    // Debug: Log AJAX call
                     console.log('Fetching meetings for lecturer_id: <?php echo $lecturerID; ?>, semester: <?php echo htmlspecialchars($selectedSemester); ?>, status: ' + (statusSelect.value || ''));
                     $.ajax({
                         url: 'lectmanagemeetings.php',
@@ -548,12 +543,10 @@ $conn->close();
                         data: { 
                             lecturer_id: <?php echo $lecturerID; ?>,
                             semester: semesterSelect.value,
-                            // MODIFIED: Send status only if it's Confirmed
                             status: statusSelect.value === 'Confirmed' ? 'Confirmed' : ''
                         },
                         dataType: 'json',
                         success: function(data) {
-                            // Debug: Log AJAX response
                             console.log('AJAX response:', data);
                             const events = data.map(meeting => ({
                                 title: meeting.topic + ' (' + meeting.meeting_time + ')',
@@ -565,7 +558,6 @@ $conn->close();
                             successCallback(events);
                         },
                         error: function(xhr, status, error) {
-                            // Debug: Log AJAX error
                             console.error('AJAX error:', status, error, xhr.responseText);
                             failureCallback();
                         }
@@ -582,7 +574,6 @@ $conn->close();
             });
             calendar.render();
 
-            // MODIFIED: Refetch calendar events when semester or status changes
             semesterSelect.addEventListener('change', function() {
                 calendar.refetchEvents();
             });
@@ -593,5 +584,4 @@ $conn->close();
         });
     </script>
 </body>
-
 </html>
