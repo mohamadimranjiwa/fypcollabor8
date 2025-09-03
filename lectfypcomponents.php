@@ -85,8 +85,8 @@ $groupNumberDisplay = $groupNumber ? $groupPrefix . str_pad($groupNumber, 3, '0'
 // Debug filter values
 error_log("Filters: Semester=$selectedSemester, Deliverable=$selectedDeliverable, GroupName=$selectedGroupName, Username=$searchUsername");
 
-// Fetch deliverables for the filter - simplified query
-$deliverablesQuery = "SELECT id, name FROM deliverables WHERE semester = ? ORDER BY name ASC";
+// Fetch deliverables for the filter
+$deliverablesQuery = "SELECT id, name, submission_type FROM deliverables WHERE semester = ? ORDER BY name ASC";
 $deliverablesStmt = $conn->prepare($deliverablesQuery);
 if ($deliverablesStmt === false) {
     die("Prepare failed (Deliverables Query): " . $conn->error);
@@ -97,9 +97,64 @@ $deliverablesResult = $deliverablesStmt->get_result();
 $deliverables = $deliverablesResult->fetch_all(MYSQLI_ASSOC);
 $deliverablesStmt->close();
 
-// Debug: Check if deliverables are empty
+// Fetch total groups for the selected semester
+$groupsQuery = "
+    SELECT COUNT(DISTINCT g.id) as total_groups
+    FROM groups g 
+    JOIN students s_leader ON g.leader_id = s_leader.id 
+    WHERE g.lecturer_id = ? 
+    AND s_leader.intake_month = SUBSTRING_INDEX(?, ' ', 1)
+    AND s_leader.intake_year = CAST(SUBSTRING_INDEX(?, ' ', -1) AS UNSIGNED)";
+$groupsStmt = $conn->prepare($groupsQuery);
+if ($groupsStmt === false) {
+    die("Prepare failed (Groups Query): " . $conn->error);
+}
+$groupsStmt->bind_param("iss", $lecturerID, $selectedSemester, $selectedSemester);
+$groupsStmt->execute();
+$groupsResult = $groupsStmt->get_result();
+$totalGroups = $groupsResult->fetch_assoc()['total_groups'] ?? 0;
+$groupsStmt->close();
+
+// Fetch total students in groups for the selected semester
+$studentsQuery = "
+    SELECT COUNT(DISTINCT gm.student_id) as total_students
+    FROM groups g
+    JOIN students s_leader ON g.leader_id = s_leader.id
+    JOIN group_members gm ON g.id = gm.group_id
+    WHERE g.lecturer_id = ?
+    AND s_leader.intake_month = SUBSTRING_INDEX(?, ' ', 1)
+    AND s_leader.intake_year = CAST(SUBSTRING_INDEX(?, ' ', -1) AS UNSIGNED)";
+$studentsStmt = $conn->prepare($studentsQuery);
+if ($studentsStmt === false) {
+    die("Prepare failed (Students Query): " . $conn->error);
+}
+$studentsStmt->bind_param("iss", $lecturerID, $selectedSemester, $selectedSemester);
+$studentsStmt->execute();
+$studentsResult = $studentsStmt->get_result();
+$totalStudents = $studentsResult->fetch_assoc()['total_students'] ?? 0;
+$studentsStmt->close();
+
+// Calculate expected submissions
+$groupDeliverables = 0;
+$individualDeliverables = 0;
+foreach ($deliverables as $deliverable) {
+    if ($deliverable['submission_type'] === 'group') {
+        $groupDeliverables++;
+    } else {
+        $individualDeliverables++;
+    }
+}
+$expectedSubmissions = ($totalGroups * $groupDeliverables) + ($totalStudents * $individualDeliverables);
+
+// Debug: Check if deliverables or groups are empty
 if (empty($deliverables)) {
     $message .= "<div class='alert alert-warning'>No deliverables found for semester: " . htmlspecialchars($selectedSemester) . "</div>";
+}
+if ($totalGroups == 0) {
+    $message .= "<div class='alert alert-warning'>No groups found for semester: " . htmlspecialchars($selectedSemester) . "</div>";
+}
+if ($expectedSubmissions == 0) {
+    $message .= "<div class='alert alert-warning'>No expected submissions for semester: " . htmlspecialchars($selectedSemester) . "</div>";
 }
 
 // Simplified submissions query - build it step by step
@@ -239,10 +294,9 @@ unset($submission);
 
 // Calculate statistics
 $totalSubmissions = count(array_filter($submissions, fn($s) => !empty($s['submission_id'])));
-$pendingSubmissions = count(array_filter($submissions, fn($s) => empty($s['submission_id'])));
 $completedSubmissions = $totalSubmissions;
-$completedPercentage = count($submissions) > 0 ? round(($completedSubmissions / count($submissions)) * 100) : 0;
-$uncompletedSubmissions = $pendingSubmissions;
+$completedPercentage = $expectedSubmissions > 0 ? round(($completedSubmissions / $expectedSubmissions) * 100) : 0;
+$uncompletedSubmissions = $expectedSubmissions - $totalSubmissions;
 
 // Close database connection
 $conn->close();
@@ -379,48 +433,52 @@ $conn->close();
 
                     <!-- Statistics Cards -->
                     <div class="row">
+                        <!-- Expected Submissions -->
                         <div class="col-xl-3 col-md-6 mb-4">
                             <div class="card border-left-primary shadow h-100 py-2">
                                 <div class="card-body">
                                     <div class="row no-gutters align-items-center">
                                         <div class="col mr-2">
                                             <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
-                                                Total Submissions</div>
+                                                Expected Submissions</div>
                                             <div class="h5 mb-0 font-weight-bold text-gray-800">
-                                                <?= htmlspecialchars($totalSubmissions) ?> Submissions
+                                                <?= htmlspecialchars($expectedSubmissions) ?> Submissions
                                             </div>
                                         </div>
                                         <div class="col-auto">
-                                            <i class="fas fa-calendar fa-2x text-gray-300"></i>
+                                            <i class="fas fa-tasks fa-2x text-gray-300"></i>
                                         </div>
                                     </div>
                                 </div>
                             </div>
                         </div>
+                        <!-- Total Submissions -->
                         <div class="col-xl-3 col-md-6 mb-4">
                             <div class="card border-left-success shadow h-100 py-2">
                                 <div class="card-body">
                                     <div class="row no-gutters align-items-center">
                                         <div class="col mr-2">
                                             <div class="text-xs font-weight-bold text-success text-uppercase mb-1">
-                                                Pending Submissions</div>
+                                                Total Submissions</div>
                                             <div class="h5 mb-0 font-weight-bold text-gray-800">
-                                                <?= htmlspecialchars($pendingSubmissions) ?> Pending
+                                                <?= htmlspecialchars($totalSubmissions) ?> Submissions
                                             </div>
                                         </div>
                                         <div class="col-auto">
-                                            <i class="fas fa-hourglass-start fa-2x text-gray-300"></i>
+                                            <i class="fas fa-file-upload fa-2x text-gray-300"></i>
                                         </div>
                                     </div>
                                 </div>
                             </div>
                         </div>
+                        <!-- Completed Submissions -->
                         <div class="col-xl-3 col-md-6 mb-4">
                             <div class="card border-left-info shadow h-100 py-2">
                                 <div class="card-body">
                                     <div class="row no-gutters align-items-center">
                                         <div class="col mr-2">
-                                            <div class="text-xs font-weight-bold text-info text-uppercase mb-1">Completed Submissions</div>
+                                            <div class="text-xs font-weight-bold text-info text-uppercase mb-1">
+                                                Completed Submissions</div>
                                             <div class="row no-gutters align-items-center">
                                                 <div class="col-auto">
                                                     <div class="h5 mb-0 mr-3 font-weight-bold text-gray-800">
@@ -444,6 +502,7 @@ $conn->close();
                                 </div>
                             </div>
                         </div>
+                        <!-- Uncompleted Submissions -->
                         <div class="col-xl-3 col-md-6 mb-4">
                             <div class="card border-left-warning shadow h-100 py-2">
                                 <div class="card-body">
@@ -571,13 +630,8 @@ $conn->close();
                                                             <?php
                                                                 $grade = floatval($submission['evaluation_grade']);
                                                                 $actual_deliverable_weightage = isset($submission['weightage']) && $submission['weightage'] !== null ? floatval($submission['weightage']) : 0;
-
-                                                                // Color coding in the table is based on the raw grade percentage for that deliverable compared to standard thresholds.
-                                                                // If you want table color based on its weighted contribution, the logic below would need to use $weightedGradeForTableColor = ($grade * $actual_deliverable_weightage) / 100;
-                                                                // and then compare $weightedGradeForTableColor against 50, 30 etc.
-                                                                // For now, keeping table color based on $grade itself as per implicit previous state before weighted contribution focus.
                                                                 $gradeClass = '';
-                                                                if ($grade >= 50) { // Defaulting to color based on grade itself for table
+                                                                if ($grade >= 50) {
                                                                     $gradeClass = 'grade-high';
                                                                 } elseif ($grade >= 30) {
                                                                     $gradeClass = 'grade-medium';
@@ -588,7 +642,6 @@ $conn->close();
                                                             <span class="<?= $gradeClass ?>">
                                                                 <?= number_format($grade, 2) ?>% 
                                                             </span>
-                                                            <?php /* Weightage and feedback removed as per user request */ ?>
                                                         <?php else: ?>
                                                             <span class="text-muted">Not Evaluated</span>
                                                         <?php endif; ?>
@@ -614,7 +667,7 @@ $conn->close();
                                                 </tr>
                                             <?php endforeach; ?>
                                         <?php else: ?>
-                                            <tr><td colspan="5" class="text-center">No submissions found.</td></tr>
+                                            <tr><td colspan="7" class="text-center">No submissions found.</td></tr>
                                         <?php endif; ?>
                                     </tbody>
                                 </table>
