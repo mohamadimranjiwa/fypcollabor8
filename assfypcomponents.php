@@ -58,13 +58,35 @@ $semesters = $semestersResult->fetch_all(MYSQLI_ASSOC);
 $selectedSemester = isset($_GET['semester']) && !empty($_GET['semester']) ? trim($_GET['semester']) : $currentSemester;
 $searchUsername = isset($_GET['username']) ? trim($_GET['username']) : '';
 $selectedDeliverable = isset($_GET['deliverable_id']) && is_numeric($_GET['deliverable_id']) ? intval($_GET['deliverable_id']) : 0;
-$selectedGroup = isset($_GET['group_id']) && is_numeric($_GET['group_id']) ? intval($_GET['group_id']) : 0;
+$groupNumberInput = isset($_GET['group_number']) ? trim($_GET['group_number']) : '';
+
+// Derive group name prefix from selected semester
+$semesterParts = explode(' ', $selectedSemester);
+$semesterMonth = $semesterParts[0] ?? 'May';
+$semesterYear = $semesterParts[1] ?? '2025';
+$groupPrefix = $semesterYear . $semesterMonth;
+
+// Extract numeric suffix from group_number input
+$groupNumber = '';
+if ($groupNumberInput) {
+    // Remove prefix if full group name is provided (e.g., '2025August001' -> '001')
+    if (strpos($groupNumberInput, $groupPrefix) === 0) {
+        $groupNumber = substr($groupNumberInput, strlen($groupPrefix));
+    } else {
+        $groupNumber = $groupNumberInput; // Assume input is just the number
+    }
+    $groupNumber = preg_replace('/[^0-9]/', '', $groupNumber); // Keep only digits
+}
+$selectedGroupName = $groupNumber ? $groupPrefix . str_pad($groupNumber, 3, '0', STR_PAD_LEFT) : '';
+
+// Initialize input value for the form
+$groupNumberDisplay = $groupNumber ? $groupPrefix . str_pad($groupNumber, 3, '0', STR_PAD_LEFT) : '';
 
 // Debug filter values
-error_log("Filters: Semester=$selectedSemester, Deliverable=$selectedDeliverable, Group=$selectedGroup, Username=$searchUsername");
+error_log("Filters: Semester=$selectedSemester, Deliverable=$selectedDeliverable, GroupName=$selectedGroupName, Username=$searchUsername");
 
 // Fetch deliverables for the filter
-$deliverablesQuery = "SELECT id, name FROM deliverables WHERE semester = ? ORDER BY name ASC";
+$deliverablesQuery = "SELECT id, name, submission_type FROM deliverables WHERE semester = ? ORDER BY name ASC";
 $deliverablesStmt = $conn->prepare($deliverablesQuery);
 if ($deliverablesStmt === false) {
     die("Prepare failed (Deliverables Query): " . $conn->error);
@@ -75,15 +97,14 @@ $deliverablesResult = $deliverablesStmt->get_result();
 $deliverables = $deliverablesResult->fetch_all(MYSQLI_ASSOC);
 $deliverablesStmt->close();
 
-// Fetch groups for the filter
+// Fetch total groups for the selected semester
 $groupsQuery = "
-    SELECT DISTINCT g.id, g.name 
+    SELECT COUNT(DISTINCT g.id) as total_groups
     FROM groups g 
-    LEFT JOIN students s_leader ON g.leader_id = s_leader.id 
+    JOIN students s_leader ON g.leader_id = s_leader.id 
     WHERE g.assessor_id = ? 
     AND s_leader.intake_month = SUBSTRING_INDEX(?, ' ', 1)
-    AND s_leader.intake_year = CAST(SUBSTRING_INDEX(?, ' ', -1) AS UNSIGNED)
-    ORDER BY g.name ASC";
+    AND s_leader.intake_year = CAST(SUBSTRING_INDEX(?, ' ', -1) AS UNSIGNED)";
 $groupsStmt = $conn->prepare($groupsQuery);
 if ($groupsStmt === false) {
     die("Prepare failed (Groups Query): " . $conn->error);
@@ -91,15 +112,49 @@ if ($groupsStmt === false) {
 $groupsStmt->bind_param("iss", $assessorID, $selectedSemester, $selectedSemester);
 $groupsStmt->execute();
 $groupsResult = $groupsStmt->get_result();
-$groups = $groupsResult->fetch_all(MYSQLI_ASSOC);
+$totalGroups = $groupsResult->fetch_assoc()['total_groups'] ?? 0;
 $groupsStmt->close();
+
+// Fetch total students in groups for the selected semester
+$studentsQuery = "
+    SELECT COUNT(DISTINCT gm.student_id) as total_students
+    FROM groups g
+    JOIN students s_leader ON g.leader_id = s_leader.id
+    JOIN group_members gm ON g.id = gm.group_id
+    WHERE g.assessor_id = ?
+    AND s_leader.intake_month = SUBSTRING_INDEX(?, ' ', 1)
+    AND s_leader.intake_year = CAST(SUBSTRING_INDEX(?, ' ', -1) AS UNSIGNED)";
+$studentsStmt = $conn->prepare($studentsQuery);
+if ($studentsStmt === false) {
+    die("Prepare failed (Students Query): " . $conn->error);
+}
+$studentsStmt->bind_param("iss", $assessorID, $selectedSemester, $selectedSemester);
+$studentsStmt->execute();
+$studentsResult = $studentsStmt->get_result();
+$totalStudents = $studentsResult->fetch_assoc()['total_students'] ?? 0;
+$studentsStmt->close();
+
+// Calculate expected submissions
+$groupDeliverables = 0;
+$individualDeliverables = 0;
+foreach ($deliverables as $deliverable) {
+    if ($deliverable['submission_type'] === 'group') {
+        $groupDeliverables++;
+    } else {
+        $individualDeliverables++;
+    }
+}
+$expectedSubmissions = ($totalGroups * $groupDeliverables) + ($totalStudents * $individualDeliverables);
 
 // Debug: Check if deliverables or groups are empty
 if (empty($deliverables)) {
     $message .= "<div class='alert alert-warning'>No deliverables found for semester: " . htmlspecialchars($selectedSemester) . "</div>";
 }
-if (empty($groups)) {
+if ($totalGroups == 0) {
     $message .= "<div class='alert alert-warning'>No groups found for semester: " . htmlspecialchars($selectedSemester) . "</div>";
+}
+if ($expectedSubmissions == 0) {
+    $message .= "<div class='alert alert-warning'>No expected submissions for semester: " . htmlspecialchars($selectedSemester) . "</div>";
 }
 
 // Submissions query
@@ -176,18 +231,21 @@ if ($selectedDeliverable > 0) {
     $paramTypes .= "i";
 }
 
-if ($selectedGroup > 0) {
-    $additionalConditions[] = "g.id = ?";
-    $params[] = $selectedGroup;
-    $paramTypes .= "i";
+if ($selectedGroupName) {
+    $additionalConditions[] = "g.name = ?";
+    $params[] = $selectedGroupName;
+    $paramTypes .= "s";
 }
 
 if ($searchUsername) {
-    $additionalConditions[] = "(g.name LIKE ? OR s.full_name LIKE ? OR s.username LIKE ?)";
+    $additionalConditions[] = "(
+        (d.submission_type = 'individual' AND s.username LIKE ?)
+        OR
+        (d.submission_type = 'group' AND EXISTS (SELECT 1 FROM group_members gm2 JOIN students s2 ON gm2.student_id = s2.id WHERE gm2.group_id = g.id AND s2.username LIKE ?))
+    )";
     $params[] = "%$searchUsername%";
     $params[] = "%$searchUsername%";
-    $params[] = "%$searchUsername%";
-    $paramTypes .= "sss";
+    $paramTypes .= "ss";
 }
 
 // Add additional conditions to query
@@ -382,13 +440,13 @@ $conn->close();
                                     <div class="row no-gutters align-items-center">
                                         <div class="col mr-2">
                                             <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
-                                                Total Submissions</div>
+                                                Expected Submissions</div>
                                             <div class="h5 mb-0 font-weight-bold text-gray-800">
-                                                <?= htmlspecialchars($totalSubmissions) ?> Submissions
+                                                <?= htmlspecialchars($expectedSubmissions) ?> Submissions
                                             </div>
                                         </div>
                                         <div class="col-auto">
-                                            <i class="fas fa-calendar fa-2x text-gray-300"></i>
+                                            <i class="fas fa-tasks fa-2x text-gray-300"></i>
                                         </div>
                                     </div>
                                 </div>
@@ -400,13 +458,13 @@ $conn->close();
                                     <div class="row no-gutters align-items-center">
                                         <div class="col mr-2">
                                             <div class="text-xs font-weight-bold text-success text-uppercase mb-1">
-                                                Pending Submissions</div>
+                                                Total Submissions</div>
                                             <div class="h5 mb-0 font-weight-bold text-gray-800">
-                                                <?= htmlspecialchars($pendingSubmissions) ?> Pending
+                                                <?= htmlspecialchars($totalSubmissions) ?> Submissions
                                             </div>
                                         </div>
                                         <div class="col-auto">
-                                            <i class="fas fa-hourglass-start fa-2x text-gray-300"></i>
+                                            <i class="fas fa-file-upload fa-2x text-gray-300"></i>
                                         </div>
                                     </div>
                                 </div>
@@ -498,16 +556,10 @@ $conn->close();
                                         </select>
                                     </div>
                                     <div class="col-md-3 mb-3">
-                                        <label for="group_id">Group</label>
-                                        <select class="form-control" id="group_id" name="group_id">
-                                            <option value="0" <?= $selectedGroup === 0 ? 'selected' : '' ?>>-- All Groups --</option>
-                                            <?php foreach ($groups as $group): ?>
-                                                <option value="<?= $group['id'] ?>" 
-                                                        <?= $selectedGroup === $group['id'] ? 'selected' : '' ?>>
-                                                    <?= htmlspecialchars($group['name']) ?>
-                                                </option>
-                                            <?php endforeach; ?>
-                                        </select>
+                                        <label for="group_number">Group Name</label>
+                                        <input type="text" class="form-control" id="group_number" name="group_number" 
+                                               value="<?= htmlspecialchars($groupNumberDisplay); ?>" 
+                                               placeholder="<?= htmlspecialchars($groupPrefix); ?>XXX">
                                     </div>
                                 </div>
                                 <button type="submit" class="btn btn-primary">Apply Filters</button>
@@ -610,7 +662,7 @@ $conn->close();
                                                 </tr>
                                             <?php endforeach; ?>
                                         <?php else: ?>
-                                            <tr><td colspan="5" class="text-center">No submissions found.</td></tr>
+                                            <tr><td colspan="7" class="text-center">No submissions found.</td></tr>
                                         <?php endif; ?>
                                     </tbody>
                                 </table>
@@ -624,7 +676,7 @@ $conn->close();
             <footer class="sticky-footer bg-white">
                 <div class="container my-auto">
                     <div class="copyright text-center my-auto">
-                        <span>Copyright © FYPCollabor8 2025</span>
+                        <span>Copyright &copy; FYPCollabor8 2025</span>
                     </div>
                 </div>
             </footer>
@@ -643,7 +695,7 @@ $conn->close();
                 <div class="modal-header">
                     <h5 class="modal-title" id="exampleModalLabel">Ready to Leave?</h5>
                     <button class="close" type="button" data-dismiss="modal" aria-label="Close">
-                        <span aria-hidden="true">×</span>
+                        <span aria-hidden="true">&times;</span>
                     </button>
                 </div>
                 <div class="modal-body">Select "Logout" below if you are ready to end your current session.</div>
@@ -671,7 +723,7 @@ $conn->close();
                 <div class="modal-header">
                     <h5 class="modal-title" id="evaluationModalLabel">Evaluate Submission</h5>
                     <button type="button" class="close" data-dismiss="modal" aria-label="Close">
-                        <span aria-hidden="true">×</span>
+                        <span aria-hidden="true">&times;</span>
                     </button>
                 </div>
                 <div class="modal-body">
@@ -1032,6 +1084,48 @@ $conn->close();
                 }
             });
         }
+
+        // Update group number input when semester changes
+        document.getElementById('semester').addEventListener('change', function() {
+            const semester = this.value;
+            const [month, year] = semester.split(' ');
+            const prefix = year + month;
+            const input = document.getElementById('group_number');
+            const currentValue = input.value;
+            const number = currentValue.replace(/^\d{4}[A-Za-z]+/, ''); // Extract number
+            input.value = number ? prefix + number : '';
+            input.placeholder = prefix + 'XXX';
+        });
+
+        // Initialize input on page load
+        window.addEventListener('load', function() {
+            const semester = document.getElementById('semester').value;
+            const [month, year] = semester.split(' ');
+            const prefix = year + month;
+            const input = document.getElementById('group_number');
+            const currentValue = input.value;
+            if (!currentValue) {
+                input.value = '';
+            } else if (!currentValue.startsWith(prefix)) {
+                const number = currentValue.replace(/^\d{4}[A-Za-z]+/, '');
+                input.value = number ? prefix + number : '';
+            }
+            input.placeholder = prefix + 'XXX';
+        });
+
+        // Ensure only valid input (prefix + number or number alone)
+        document.getElementById('group_number').addEventListener('input', function() {
+            const semester = document.getElementById('semester').value;
+            const [month, year] = semester.split(' ');
+            const prefix = year + month;
+            let value = this.value;
+            // Allow user to enter number or full group name
+            if (value && !value.startsWith(prefix)) {
+                // If input doesn't start with prefix, assume it's a number
+                value = prefix + value.replace(/[^0-9]/g, '');
+                this.value = value;
+            }
+        });
     </script>
 </body>
 </html>
