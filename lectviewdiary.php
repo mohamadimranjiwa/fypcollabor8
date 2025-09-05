@@ -1,6 +1,5 @@
 <?php
 session_start();
-
 include 'connection.php';
 
 // Ensure the lecturer is logged in
@@ -17,8 +16,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     if ($_POST['action'] === 'fetch_students') {
         $groupName = isset($_POST['group_name']) && $_POST['group_name'] !== '' ? $_POST['group_name'] : null;
         $semesterName = isset($_POST['semester']) && $_POST['semester'] !== '' ? $_POST['semester'] : null;
+        $username = isset($_POST['username']) && $_POST['username'] !== '' ? $_POST['username'] : null;
 
-        // Query to filter students by semester
+        // Query to filter students by semester, group, and username
         $studentsQuery = "
             SELECT DISTINCT s.id, s.full_name AS name 
             FROM students s 
@@ -37,6 +37,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         if ($groupName) {
             $studentsQuery .= " AND g.name = ?";
             $params[] = $groupName;
+            $paramTypes .= "s";
+        }
+        if ($username) {
+            $studentsQuery .= " AND s.username LIKE ?";
+            $params[] = "%$username%";
             $paramTypes .= "s";
         }
         $stmt = $conn->prepare($studentsQuery);
@@ -58,6 +63,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         $studentId = isset($_POST['student_id']) && is_numeric($_POST['student_id']) ? intval($_POST['student_id']) : null;
         $week = isset($_POST['week']) && is_numeric($_POST['week']) ? intval($_POST['week']) : null;
         $semesterName = isset($_POST['semester']) && $_POST['semester'] !== '' ? $_POST['semester'] : null;
+        $groupName = isset($_POST['group_name']) && $_POST['group_name'] !== '' ? $_POST['group_name'] : null;
+        $username = isset($_POST['username']) && $_POST['username'] !== '' ? $_POST['username'] : null;
 
         // Fetch semester start date
         $semesterQuery = "SELECT start_date FROM semesters WHERE is_current = 1 LIMIT 1";
@@ -101,18 +108,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             WHERE d.student_id = ? AND d.entry_date BETWEEN ? AND ? 
                   AND g.lecturer_id = ? AND g.status = 'Approved'
         ";
+        $params = [$studentId, $weekStartStr, $weekEndStr, $lecturerID];
+        $paramTypes = "issi";
         if ($semesterName) {
             $diaryQuery .= " AND sem.semester_name = ?";
-            $stmt = $conn->prepare($diaryQuery);
-            $stmt->bind_param("issis", $studentId, $weekStartStr, $weekEndStr, $lecturerID, $semesterName);
-        } else {
-            $stmt = $conn->prepare($diaryQuery);
-            $stmt->bind_param("issi", $studentId, $weekStartStr, $weekEndStr, $lecturerID);
+            $params[] = $semesterName;
+            $paramTypes .= "s";
         }
+        if ($groupName) {
+            $diaryQuery .= " AND g.name = ?";
+            $params[] = $groupName;
+            $paramTypes .= "s";
+        }
+        if ($username) {
+            $diaryQuery .= " AND s.username LIKE ?";
+            $params[] = "%$username%";
+            $paramTypes .= "s";
+        }
+        $stmt = $conn->prepare($diaryQuery);
         if (!$stmt) {
             echo json_encode(['error' => 'Query preparation failed']);
             exit;
         }
+        $stmt->bind_param($paramTypes, ...$params);
         $stmt->execute();
         $result = $stmt->get_result();
         $diary = $result->fetch_assoc();
@@ -171,31 +189,29 @@ if (!$selectedSemester) {
     $selectedSemester = $currentSemester ? $currentSemester['semester_name'] : null;
 }
 
-// Fetch approved groups for the selected semester
-$groupsQuery = "
-    SELECT DISTINCT g.id, g.name 
-    FROM groups g
-    JOIN group_members gm ON g.id = gm.group_id
-    JOIN students s ON gm.student_id = s.id
-    JOIN semesters sem ON s.intake_year = YEAR(sem.start_date) AND s.intake_month = MONTHNAME(sem.start_date)
-    WHERE g.lecturer_id = ? AND g.status = 'Approved'";
-$params = [$lecturerID];
-$paramTypes = "i";
-if ($selectedSemester) {
-    $groupsQuery .= " AND sem.semester_name = ?";
-    $params[] = $selectedSemester;
-    $paramTypes .= "s";
-}
-$stmt = $conn->prepare($groupsQuery);
-$stmt->bind_param($paramTypes, ...$params);
-$stmt->execute();
-$groupsResult = $stmt->get_result();
-$groups = $groupsResult->fetch_all(MYSQLI_ASSOC);
-$stmt->close();
+// Derive group name prefix from selected semester
+$semesterParts = $selectedSemester ? explode(' ', $selectedSemester) : ['May', '2025'];
+$semesterMonth = $semesterParts[0] ?? 'May';
+$semesterYear = $semesterParts[1] ?? '2025';
+$groupPrefix = $semesterYear . $semesterMonth;
 
 // Handle filters
-$searchStudent = isset($_GET['student_name']) ? trim($_GET['student_name']) : '';
-$selectedGroup = isset($_GET['group_name']) ? $_GET['group_name'] : '';
+$searchUsername = isset($_GET['username']) ? trim($_GET['username']) : '';
+$groupNumberInput = isset($_GET['group_name']) ? trim($_GET['group_name']) : '';
+
+// Extract numeric suffix from group_name input
+$groupNumber = '';
+if ($groupNumberInput) {
+    if (strpos($groupNumberInput, $groupPrefix) === 0) {
+        $groupNumber = substr($groupNumberInput, strlen($groupPrefix));
+    } else {
+        $groupNumber = $groupNumberInput;
+    }
+    $groupNumber = preg_replace('/[^0-9]/', '', $groupNumber);
+}
+$selectedGroup = $groupNumber ? $groupPrefix . str_pad($groupNumber, 3, '0', STR_PAD_LEFT) : '';
+$groupNumberDisplay = $groupNumber ? $groupPrefix . str_pad($groupNumber, 3, '0', STR_PAD_LEFT) : '';
+
 $selectedWeek = isset($_GET['week']) && is_numeric($_GET['week']) ? intval($_GET['week']) : 0;
 
 // Fetch semester start date and calculate current week
@@ -213,11 +229,11 @@ if ($selectedSemester) {
 
     if ($semesterStartDate) {
         $startDate = new DateTime($semesterStartDate);
-        $currentDate = new DateTime('2025-08-26'); // Current date as per system
+        $currentDate = new DateTime('2025-09-05'); // Current date as per system
         $daysDifference = $startDate->diff($currentDate)->days;
         $currentWeek = floor($daysDifference / 7) + 1;
         if ($currentWeek < 1) $currentWeek = 1;
-        if ($currentWeek > 12) $currentWeek = 12; // Assuming max 12 weeks
+        if ($currentWeek > 12) $currentWeek = 12;
     }
 }
 
@@ -225,7 +241,7 @@ if ($selectedSemester) {
 $totalEntries = 0;
 $totalStudents = 0;
 
-// Parameters for total students query (no week filter)
+// Parameters for total students query
 $studentCountQuery = "
     SELECT COUNT(DISTINCT s.id) AS total_students
     FROM students s
@@ -234,33 +250,37 @@ $studentCountQuery = "
     JOIN semesters sem ON s.intake_year = YEAR(sem.start_date) AND s.intake_month = MONTHNAME(sem.start_date)
     WHERE g.lecturer_id = ? AND g.status = 'Approved'
 ";
-$studentParams = [$lecturerID];
-$studentParamTypes = "i";
+$params = [$lecturerID];
+$paramTypes = "i";
 if ($selectedSemester) {
     $studentCountQuery .= " AND sem.semester_name = ?";
-    $studentParams[] = $selectedSemester;
-    $studentParamTypes .= "s";
+    $params[] = $selectedSemester;
+    $paramTypes .= "s";
 }
-if ($searchStudent) {
-    $studentCountQuery .= " AND s.full_name LIKE ?";
-    $studentParams[] = "%$searchStudent%";
-    $studentParamTypes .= "s";
+if ($searchUsername) {
+    $studentCountQuery .= " AND s.username LIKE ?";
+    $params[] = "%$searchUsername%";
+    $paramTypes .= "s";
 }
 if ($selectedGroup) {
     $studentCountQuery .= " AND g.name = ?";
-    $studentParams[] = $selectedGroup;
-    $studentParamTypes .= "s";
+    $params[] = $selectedGroup;
+    $paramTypes .= "s";
+} elseif ($selectedSemester) {
+    $studentCountQuery .= " AND g.name LIKE ?";
+    $params[] = $groupPrefix . '%';
+    $paramTypes .= "s";
 }
 
 $stmt = $conn->prepare($studentCountQuery);
-$stmt->bind_param($studentParamTypes, ...$studentParams);
+$stmt->bind_param($paramTypes, ...$params);
 $stmt->execute();
 $result = $stmt->get_result();
 $row = $result->fetch_assoc();
 $totalStudents = $row['total_students'] ?? 0;
 $stmt->close();
 
-// For total entries, use a separate query that filters by week if selected
+// Total entries query
 $query = "
     SELECT COUNT(DISTINCT d.id) AS total_entries
     FROM diary d
@@ -277,14 +297,18 @@ if ($selectedSemester) {
     $params[] = $selectedSemester;
     $paramTypes .= "s";
 }
-if ($searchStudent) {
-    $query .= " AND s.full_name LIKE ?";
-    $params[] = "%$searchStudent%";
+if ($searchUsername) {
+    $query .= " AND s.username LIKE ?";
+    $params[] = "%$searchUsername%";
     $paramTypes .= "s";
 }
 if ($selectedGroup) {
     $query .= " AND g.name = ?";
     $params[] = $selectedGroup;
+    $paramTypes .= "s";
+} elseif ($selectedSemester) {
+    $query .= " AND g.name LIKE ?";
+    $params[] = $groupPrefix . '%';
     $paramTypes .= "s";
 }
 if ($selectedWeek && $semesterStartDate) {
@@ -340,14 +364,18 @@ if ($selectedSemester) {
     $params[] = $selectedSemester;
     $paramTypes .= "s";
 }
-if ($searchStudent) {
-    $studentDiaryQuery .= " AND s.full_name LIKE ?";
-    $params[] = "%$searchStudent%";
+if ($searchUsername) {
+    $studentDiaryQuery .= " AND s.username LIKE ?";
+    $params[] = "%$searchUsername%";
     $paramTypes .= "s";
 }
 if ($selectedGroup) {
     $studentDiaryQuery .= " AND g.name = ?";
     $params[] = $selectedGroup;
+    $paramTypes .= "s";
+} elseif ($selectedSemester) {
+    $studentDiaryQuery .= " AND g.name LIKE ?";
+    $params[] = $groupPrefix . '%';
     $paramTypes .= "s";
 }
 $studentDiaryQuery .= " GROUP BY s.id, s.full_name, g.name ORDER BY s.full_name";
@@ -398,14 +426,18 @@ if ($selectedSemester) {
     $params[] = $selectedSemester;
     $paramTypes .= "s";
 }
-if ($searchStudent) {
-    $submissionStatusQuery .= " AND s.full_name LIKE ?";
-    $params[] = "%$searchStudent%";
+if ($searchUsername) {
+    $submissionStatusQuery .= " AND s.username LIKE ?";
+    $params[] = "%$searchUsername%";
     $paramTypes .= "s";
 }
 if ($selectedGroup) {
     $submissionStatusQuery .= " AND g.name = ?";
     $params[] = $selectedGroup;
+    $paramTypes .= "s";
+} elseif ($selectedSemester) {
+    $submissionStatusQuery .= " AND g.name LIKE ?";
+    $params[] = $groupPrefix . '%';
     $paramTypes .= "s";
 }
 $submissionStatusQuery .= " ORDER BY s.id, d.entry_date";
@@ -662,24 +694,18 @@ $conn->close();
                                             <?php endforeach; ?>
                                         </select>
                                     </div>
-                                    <!-- Student Name Search -->
+                                    <!-- Username Search -->
                                     <div class="col-md-3 mb-3">
-                                        <label for="student_name">Search Student</label>
-                                        <input type="text" class="form-control" id="student_name" name="student_name" 
-                                               value="<?php echo htmlspecialchars($searchStudent); ?>" placeholder="Enter student name">
+                                        <label for="username">Username</label>
+                                        <input type="text" class="form-control" id="username" name="username" 
+                                               value="<?php echo htmlspecialchars($searchUsername); ?>" placeholder="Enter student username">
                                     </div>
                                     <!-- Group Name Filter -->
                                     <div class="col-md-3 mb-3">
-                                        <label for="group_name">Group</label>
-                                        <select class="form-control" id="group_name" name="group_name">
-                                            <option value="">-- All Groups --</option>
-                                            <?php foreach ($groups as $group): ?>
-                                                <option value="<?php echo htmlspecialchars($group['name']); ?>" 
-                                                        <?php echo $selectedGroup === $group['name'] ? 'selected' : ''; ?>>
-                                                    <?php echo htmlspecialchars($group['name']); ?>
-                                                </option>
-                                            <?php endforeach; ?>
-                                        </select>
+                                        <label for="group_name">Group Name</label>
+                                        <input type="text" class="form-control" id="group_name" name="group_name" 
+                                               value="<?php echo htmlspecialchars($groupNumberDisplay); ?>" 
+                                               placeholder="<?php echo htmlspecialchars($groupPrefix); ?>XXX">
                                     </div>
                                     <!-- Week Filter -->
                                     <div class="col-md-3 mb-3">
@@ -768,7 +794,7 @@ $conn->close();
                                                         <td><?php echo htmlspecialchars($data['student_name'] ?? 'N/A'); ?></td>
                                                         <?php foreach ($weeksToShow as $i): ?>
                                                             <td class="<?php echo $data['weeks'][$i] ? 'submitted' : 'not-submitted'; ?>">
-                                                                <?php echo $data['weeks'][$i] ? '✔ <i class="fas fa-info-circle info-icon" data-student-id="' . htmlspecialchars($studentId) . '" data-week="' . $i . '" data-semester="' . htmlspecialchars($selectedSemester) . '" data-toggle="modal" data-target="#diaryModal"></i>' : '✘'; ?>
+                                                                <?php echo $data['weeks'][$i] ? '✔ <i class="fas fa-info-circle info-icon" data-student-id="' . htmlspecialchars($studentId) . '" data-week="' . $i . '" data-semester="' . htmlspecialchars($selectedSemester) . '" data-group-name="' . htmlspecialchars($selectedGroup) . '" data-username="' . htmlspecialchars($searchUsername) . '" data-toggle="modal" data-target="#diaryModal"></i>' : '✘'; ?>
                                                             </td>
                                                         <?php endforeach; ?>
                                                     </tr>
@@ -857,15 +883,16 @@ $conn->close();
 
     <script>
         $(document).ready(function() {
-            // Load students based on group and semester
-            function loadStudents(groupName, semester) {
+            // Load students based on filters
+            function loadStudents(groupName, semester, username) {
                 $.ajax({
                     url: 'lectviewdiary.php',
                     type: 'POST',
                     data: { 
                         action: 'fetch_students', 
                         group_name: groupName, 
-                        semester: semester 
+                        semester: semester,
+                        username: username
                     },
                     dataType: 'json',
                     success: function(data) {
@@ -879,9 +906,50 @@ $conn->close();
                 });
             }
 
-            // Update on group or semester change
-            $('#group_name, #semester').on('change', function() {
-                loadStudents($('#group_name').val(), $('#semester').val());
+            // Update group name input when semester changes
+            $('#semester').on('change', function() {
+                const semester = this.value;
+                const [month, year] = semester.split(' ');
+                const prefix = year + month;
+                const input = $('#group_name');
+                const currentValue = input.val();
+                const number = currentValue.replace(/^\d{4}[A-Za-z]+/, '');
+                input.val(number ? prefix + number : '');
+                input.attr('placeholder', prefix + 'XXX');
+                loadStudents(input.val(), semester, $('#username').val());
+            });
+
+            // Ensure valid group name input
+            $('#group_name').on('input', function() {
+                const semester = $('#semester').val();
+                const [month, year] = semester.split(' ');
+                const prefix = year + month;
+                let value = this.value;
+                if (value && !value.startsWith(prefix)) {
+                    value = prefix + value.replace(/[^0-9]/g, '');
+                    this.value = value;
+                }
+            });
+
+            // Initialize group name input on page load
+            const semester = $('#semester').val();
+            if (semester) {
+                const [month, year] = semester.split(' ');
+                const prefix = year + month;
+                const input = $('#group_name');
+                const currentValue = input.val();
+                if (!currentValue) {
+                    input.val('');
+                } else if (!currentValue.startsWith(prefix)) {
+                    const number = currentValue.replace(/^\d{4}[A-Za-z]+/, '');
+                    input.val(number ? prefix + number : '');
+                }
+                input.attr('placeholder', prefix + 'XXX');
+            }
+
+            // Update on filter changes
+            $('#group_name, #semester, #username, #week').on('change', function() {
+                loadStudents($('#group_name').val(), $('#semester').val(), $('#username').val());
             });
 
             // Handle info icon click
@@ -889,6 +957,8 @@ $conn->close();
                 var studentId = $(this).data('student-id');
                 var week = $(this).data('week');
                 var semester = $(this).data('semester') || '';
+                var groupName = $(this).data('group-name') || '';
+                var username = $(this).data('username') || '';
                 $('#diaryModalBody').html('<p>Loading...</p>');
 
                 $.ajax({
@@ -898,7 +968,9 @@ $conn->close();
                         action: 'fetch_diary', 
                         student_id: studentId, 
                         week: week, 
-                        semester: semester 
+                        semester: semester,
+                        group_name: groupName,
+                        username: username
                     },
                     dataType: 'json',
                     success: function(response) {
