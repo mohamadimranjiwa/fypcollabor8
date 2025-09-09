@@ -52,43 +52,26 @@ $currentSemesterName = $currentSemester ? $currentSemester['semester_name'] : ($
 // Initialize filter parameters
 $selectedSemester = isset($_GET['semester']) && trim($_GET['semester']) !== '' ? trim($_GET['semester']) : $currentSemesterName;
 $searchUsername = isset($_GET['username']) ? trim($_GET['username']) : '';
-$selectedGroup = isset($_GET['group_name']) ? trim($_GET['group_name']) : '';
+$groupNumberInput = isset($_GET['group_name']) ? trim($_GET['group_name']) : '';
 
-// Fetch groups for the filter (semester-based)
-$groupsConditions = [];
-$groupsParams = [];
-$groupsParamTypes = "";
+// Derive group name prefix from selected semester
+$semesterParts = $selectedSemester ? explode(' ', $selectedSemester) : ['May', '2025'];
+$semesterMonth = $semesterParts[0] ?? 'May';
+$semesterYear = $semesterParts[1] ?? '2025';
+$groupPrefix = $semesterYear . $semesterMonth;
 
-$groupsConditions[] = "g.status = 'Approved'";
-
-if ($selectedSemester) {
-    $groupsConditions[] = "s.intake_year = YEAR(sem.start_date) AND s.intake_month = MONTHNAME(sem.start_date) AND sem.semester_name = ?";
-    $groupsParams[] = $selectedSemester;
-    $groupsParamTypes .= "s";
+// Extract numeric suffix from group_name input
+$groupNumber = '';
+if ($groupNumberInput) {
+    if (strpos($groupNumberInput, $groupPrefix) === 0) {
+        $groupNumber = substr($groupNumberInput, strlen($groupPrefix));
+    } else {
+        $groupNumber = $groupNumberInput;
+    }
+    $groupNumber = preg_replace('/[^0-9]/', '', $groupNumber);
 }
-
-$groupsQuery = "
-    SELECT DISTINCT g.name
-    FROM groups g
-    LEFT JOIN group_members gm ON g.id = gm.group_id
-    LEFT JOIN students s ON gm.student_id = s.id
-    LEFT JOIN semesters sem ON s.intake_year = YEAR(sem.start_date) AND s.intake_month = MONTHNAME(sem.start_date)";
-if (!empty($groupsConditions)) {
-    $groupsQuery .= " WHERE " . implode(" AND ", $groupsConditions);
-}
-$groupsQuery .= " ORDER BY g.name ASC";
-error_log("Groups Query: $groupsQuery");
-$stmt = $conn->prepare($groupsQuery);
-if ($stmt === false) {
-    die("Prepare failed for groups query: " . $conn->error);
-}
-if (!empty($groupsParams)) {
-    $stmt->bind_param($groupsParamTypes, ...$groupsParams);
-}
-$stmt->execute();
-$groupsResult = $stmt->get_result();
-$groups = $groupsResult->fetch_all(MYSQLI_ASSOC);
-$stmt->close();
+$selectedGroup = $groupNumber ? $groupPrefix . str_pad($groupNumber, 3, '0', STR_PAD_LEFT) : '';
+$groupNumberDisplay = $groupNumber ? $groupPrefix . str_pad($groupNumber, 3, '0', STR_PAD_LEFT) : '';
 
 // Fetch total students
 $totalStudentsConditions = [];
@@ -110,6 +93,10 @@ if ($searchUsername) {
 if ($selectedGroup) {
     $totalStudentsConditions[] = "g.name = ?";
     $totalStudentsParams[] = $selectedGroup;
+    $totalStudentsParamTypes .= "s";
+} elseif ($selectedSemester) {
+    $totalStudentsConditions[] = "g.name LIKE ?";
+    $totalStudentsParams[] = $groupPrefix . '%';
     $totalStudentsParamTypes .= "s";
 }
 
@@ -150,6 +137,10 @@ if ($selectedSemester) {
 if ($selectedGroup) {
     $totalProjectsConditions[] = "g.name = ?";
     $totalProjectsParams[] = $selectedGroup;
+    $totalProjectsParamTypes .= "s";
+} elseif ($selectedSemester) {
+    $totalProjectsConditions[] = "g.name LIKE ?";
+    $totalProjectsParams[] = $groupPrefix . '%';
     $totalProjectsParamTypes .= "s";
 }
 
@@ -195,6 +186,10 @@ if ($searchUsername) {
 if ($selectedGroup) {
     $studentDetailsConditions[] = "g.name = ?";
     $studentDetailsParams[] = $selectedGroup;
+    $studentDetailsParamTypes .= "s";
+} elseif ($selectedSemester) {
+    $studentDetailsConditions[] = "g.name LIKE ?";
+    $studentDetailsParams[] = $groupPrefix . '%';
     $studentDetailsParamTypes .= "s";
 }
 
@@ -647,7 +642,7 @@ $conn->close();
                                             <?php endforeach; ?>
                                         </select>
                                     </div>
-                                    <!-- Student Name Search -->
+                                    <!-- Username Search -->
                                     <div class="col-md-4 mb-3">
                                         <label for="username">Username</label>
                                         <input type="text" class="form-control" id="username" name="username" 
@@ -656,15 +651,9 @@ $conn->close();
                                     <!-- Group Name Filter -->
                                     <div class="col-md-4 mb-3">
                                         <label for="group_name">Group Name</label>
-                                        <select class="form-control" id="group_name" name="group_name">
-                                            <option value="">-- All Groups --</option>
-                                            <?php foreach ($groups as $group): ?>
-                                                <option value="<?= htmlspecialchars($group['name']) ?>" 
-                                                        <?= $selectedGroup === $group['name'] ? 'selected' : '' ?>>
-                                                    <?= htmlspecialchars($group['name']) ?>
-                                                </option>
-                                            <?php endforeach; ?>
-                                        </select>
+                                        <input type="text" class="form-control" id="group_name" name="group_name" 
+                                               value="<?= htmlspecialchars($groupNumberDisplay) ?>" 
+                                               placeholder="<?= htmlspecialchars($groupPrefix) ?>XXX">
                                     </div>
                                 </div>
                                 <button type="submit" class="btn btn-primary">Apply Filters</button>
@@ -882,9 +871,50 @@ $conn->close();
     <!-- Page level custom scripts -->
     <script src="js/demo/datatables-demo.js"></script>
 
-    <!-- Custom script for modal -->
+    <!-- Custom script for modal and group name input -->
     <script>
     $(document).ready(function() {
+        // Update group name input when semester changes
+        $('#semester').on('change', function() {
+            const semester = this.value;
+            const [month, year] = semester.split(' ');
+            const prefix = year + month;
+            const input = $('#group_name');
+            const currentValue = input.val();
+            const number = currentValue.replace(/^\d{4}[A-Za-z]+/, '');
+            input.val(number ? prefix + number : '');
+            input.attr('placeholder', prefix + 'XXX');
+        });
+
+        // Ensure valid group name input
+        $('#group_name').on('input', function() {
+            const semester = $('#semester').val();
+            const [month, year] = semester.split(' ');
+            const prefix = year + month;
+            let value = this.value;
+            if (value && !value.startsWith(prefix)) {
+                value = prefix + value.replace(/[^0-9]/g, '');
+                this.value = value;
+            }
+        });
+
+        // Initialize group name input on page load
+        const semester = $('#semester').val();
+        if (semester) {
+            const [month, year] = semester.split(' ');
+            const prefix = year + month;
+            const input = $('#group_name');
+            const currentValue = input.val();
+            if (!currentValue) {
+                input.val('');
+            } else if (!currentValue.startsWith(prefix)) {
+                const number = currentValue.replace(/^\d{4}[A-Za-z]+/, '');
+                input.val(number ? prefix + number : '');
+            }
+            input.attr('placeholder', prefix + 'XXX');
+        }
+
+        // Handle info icon click for modal
         $('.info-icon').on('click', function() {
             var studentId = $(this).data('student-id');
             var groupId = $(this).data('group-id');
@@ -986,6 +1016,5 @@ $conn->close();
         });
     });
     </script>
-
 </body>
 </html>
