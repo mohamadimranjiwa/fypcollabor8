@@ -5,7 +5,7 @@ include 'connection.php';
 
 // Enable error reporting for debugging
 ini_set('display_errors', 1);
-ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
 
 // Ensure the coordinator is logged in
@@ -69,52 +69,101 @@ $semesters = $semestersResult ? $semestersResult->fetch_all(MYSQLI_ASSOC) : [];
 
 // Initialize filter parameters
 $selectedSemester = isset($_GET['semester']) && !empty($_GET['semester']) ? trim($_GET['semester']) : $currentSemester;
-$searchStudent = isset($_GET['student_name']) ? trim($_GET['student_name']) : '';
+$searchUsername = isset($_GET['username']) ? trim($_GET['username']) : '';
 $selectedDeliverable = isset($_GET['deliverable_id']) && is_numeric($_GET['deliverable_id']) ? intval($_GET['deliverable_id']) : 0;
-$selectedGroup = isset($_GET['group_id']) && is_numeric($_GET['group_id']) ? intval($_GET['group_id']) : 0;
+$groupNumberInput = isset($_GET['group_name']) ? trim($_GET['group_name']) : '';
+
+// Derive group name prefix from selected semester
+$semesterParts = $selectedSemester ? explode(' ', $selectedSemester) : ['May', '2025'];
+$semesterMonth = $semesterParts[0] ?? 'May';
+$semesterYear = $semesterParts[1] ?? '2025';
+$groupPrefix = $semesterYear . $semesterMonth;
+
+// Extract numeric suffix from group_name input
+$groupNumber = '';
+if ($groupNumberInput) {
+    if (strpos($groupNumberInput, $groupPrefix) === 0) {
+        $groupNumber = substr($groupNumberInput, strlen($groupPrefix));
+    } else {
+        $groupNumber = $groupNumberInput;
+    }
+    $groupNumber = preg_replace('/[^0-9]/', '', $groupNumber);
+}
+$selectedGroup = $groupNumber ? $groupPrefix . str_pad($groupNumber, 3, '0', STR_PAD_LEFT) : '';
+$groupNumberDisplay = $groupNumber ? $groupPrefix . str_pad($groupNumber, 3, '0', STR_PAD_LEFT) : '';
 
 // Fetch deliverables for the filter
-$deliverablesSemester = $selectedSemester ?: $currentSemester;
-$deliverablesQuery = "SELECT id, name FROM deliverables WHERE semester = ? ORDER BY name ASC";
+$deliverablesQuery = "SELECT id, name, submission_type FROM deliverables WHERE semester = ? ORDER BY name ASC";
 $stmt = $conn->prepare($deliverablesQuery);
 if (!$stmt) {
     error_log("Prepare failed (Deliverables Query): " . $conn->error);
     $message .= "<div class='alert alert-error'>Error preparing deliverables query.</div>";
 } else {
-    $stmt->bind_param("s", $deliverablesSemester);
+    $stmt->bind_param("s", $selectedSemester);
     $stmt->execute();
     $deliverablesResult = $stmt->get_result();
     $deliverables = $deliverablesResult->fetch_all(MYSQLI_ASSOC);
     $stmt->close();
 }
 
-// Fetch groups for the filter
+// Fetch total groups for the selected semester
 $groupsQuery = "
-    SELECT DISTINCT g.id, g.name 
-    FROM groups g
-    JOIN students s_leader ON g.leader_id = s_leader.id
+    SELECT COUNT(DISTINCT g.id) as total_groups
+    FROM groups g 
+    JOIN students s_leader ON g.leader_id = s_leader.id 
     WHERE s_leader.intake_month = SUBSTRING_INDEX(?, ' ', 1)
     AND s_leader.intake_year = CAST(SUBSTRING_INDEX(?, ' ', -1) AS UNSIGNED)
-    AND g.status = 'Approved'
-    ORDER BY g.name ASC";
+    AND g.status = 'Approved'";
 $groupsStmt = $conn->prepare($groupsQuery);
 if ($groupsStmt === false) {
-    error_log("Prepare failed (Groups Query): " . $conn->error);
-    $message .= "<div class='alert alert-error'>Error preparing groups query.</div>";
-} else {
-    $groupsStmt->bind_param("ss", $selectedSemester, $selectedSemester);
-    $groupsStmt->execute();
-    $groupsResult = $groupsStmt->get_result();
-    $groups = $groupsResult->fetch_all(MYSQLI_ASSOC);
-    $groupsStmt->close();
+    die("Prepare failed (Groups Query): " . $conn->error);
 }
+$groupsStmt->bind_param("ss", $selectedSemester, $selectedSemester);
+$groupsStmt->execute();
+$groupsResult = $groupsStmt->get_result();
+$totalGroups = $groupsResult->fetch_assoc()['total_groups'] ?? 0;
+$groupsStmt->close();
 
-// Check for empty results
-if (empty($deliverables)) {
-    $message .= "<div class='alert alert-warning'>No deliverables found for semester: " . htmlspecialchars($deliverablesSemester) . "</div>";
+// Fetch total students in groups for the selected semester
+$studentsQuery = "
+    SELECT COUNT(DISTINCT gm.student_id) as total_students
+    FROM groups g
+    JOIN students s_leader ON g.leader_id = s_leader.id
+    JOIN group_members gm ON g.id = gm.group_id
+    WHERE s_leader.intake_month = SUBSTRING_INDEX(?, ' ', 1)
+    AND s_leader.intake_year = CAST(SUBSTRING_INDEX(?, ' ', -1) AS UNSIGNED)
+    AND g.status = 'Approved'";
+$studentsStmt = $conn->prepare($studentsQuery);
+if ($studentsStmt === false) {
+    die("Prepare failed (Students Query): " . $conn->error);
 }
-if (empty($groups)) {
+$studentsStmt->bind_param("ss", $selectedSemester, $selectedSemester);
+$studentsStmt->execute();
+$studentsResult = $studentsStmt->get_result();
+$totalStudents = $studentsResult->fetch_assoc()['total_students'] ?? 0;
+$studentsStmt->close();
+
+// Calculate expected submissions
+$groupDeliverables = 0;
+$individualDeliverables = 0;
+foreach ($deliverables as $deliverable) {
+    if ($deliverable['submission_type'] === 'group') {
+        $groupDeliverables++;
+    } else {
+        $individualDeliverables++;
+    }
+}
+$expectedSubmissions = ($totalGroups * $groupDeliverables) + ($totalStudents * $individualDeliverables);
+
+// Debug: Check if deliverables or groups are empty
+if (empty($deliverables)) {
+    $message .= "<div class='alert alert-warning'>No deliverables found for semester: " . htmlspecialchars($selectedSemester) . "</div>";
+}
+if ($totalGroups == 0) {
     $message .= "<div class='alert alert-warning'>No groups found for semester: " . htmlspecialchars($selectedSemester) . "</div>";
+}
+if ($expectedSubmissions == 0) {
+    $message .= "<div class='alert alert-warning'>No expected submissions for semester: " . htmlspecialchars($selectedSemester) . "</div>";
 }
 
 // Build submissions query
@@ -145,25 +194,30 @@ if ($selectedDeliverable > 0) {
 }
 
 // Group filter
-if ($selectedGroup > 0) {
-    $groupConditions[] = "g.id = ?";
+if ($selectedGroup) {
+    $groupConditions[] = "g.name = ?";
     $groupParams[] = $selectedGroup;
-    $groupParamTypes .= "i";
-    $individualConditions[] = "g.id = ?";
+    $groupParamTypes .= "s";
+    $individualConditions[] = "g.name = ?";
     $individualParams[] = $selectedGroup;
-    $individualParamTypes .= "i";
+    $individualParamTypes .= "s";
+} elseif ($selectedSemester) {
+    $groupConditions[] = "g.name LIKE ?";
+    $groupParams[] = $groupPrefix . '%';
+    $groupParamTypes .= "s";
+    $individualConditions[] = "g.name LIKE ?";
+    $individualParams[] = $groupPrefix . '%';
+    $individualParamTypes .= "s";
 }
 
-// Student or group name search
-if ($searchStudent) {
-    $groupConditions[] = "g.name LIKE ?";
-    $groupParams[] = "%$searchStudent%";
+// Student search (username only)
+if ($searchUsername) {
+    $individualConditions[] = "s.username LIKE ?";
+    $individualParams[] = "%$searchUsername%";
+    $individualParamTypes .= "s";
+    $groupConditions[] = "EXISTS (SELECT 1 FROM group_members gm2 JOIN students s2 ON gm2.student_id = s2.id WHERE gm2.group_id = g.id AND s2.username LIKE ?)";
+    $groupParams[] = "%$searchUsername%";
     $groupParamTypes .= "s";
-    $individualConditions[] = "(s.username LIKE ? OR s.full_name LIKE ? OR g.name LIKE ?)";
-    $individualParams[] = "%$searchStudent%";
-    $individualParams[] = "%$searchStudent%";
-    $individualParams[] = "%$searchStudent%";
-    $individualParamTypes .= "sss";
 }
 
 // Submissions query with semester filtering
@@ -238,7 +292,23 @@ $finalParamTypes = "ss" . $groupParamTypes . "ss" . $individualParamTypes;
 
 error_log("Submissions Query: $submissionsQuery");
 error_log("Final Params: " . json_encode($finalParams));
-error_log("Final ParamTypes: $finalParamTypes");
+error_log("Final Param Types: $finalParamTypes");
+error_log("Search Username: " . $searchUsername);
+
+// Debug: Check student data for username
+$debugQuery = "SELECT username, full_name FROM students WHERE username LIKE ?";
+$debugStmt = $conn->prepare($debugQuery);
+if ($debugStmt) {
+    $debugParam = "%$searchUsername%";
+    $debugStmt->bind_param("s", $debugParam);
+    $debugStmt->execute();
+    $debugResult = $debugStmt->get_result();
+    $debugStudents = $debugResult->fetch_all(MYSQLI_ASSOC);
+    error_log("Debug Students for '$searchUsername': " . json_encode($debugStudents));
+    $debugStmt->close();
+} else {
+    error_log("Debug Query Prepare failed: " . $conn->error);
+}
 
 $stmt = $conn->prepare($submissionsQuery);
 if ($stmt === false) {
@@ -252,6 +322,7 @@ if ($stmt === false) {
     $submissionsResult = $stmt->get_result();
     $submissions = $submissionsResult->fetch_all(MYSQLI_ASSOC);
     $stmt->close();
+    error_log("Submissions Fetched: " . json_encode($submissions));
 }
 
 // Fetch group members
@@ -281,12 +352,11 @@ foreach ($submissions as &$submission) {
 }
 unset($submission);
 
-// Calculate statistics (Updated to match lecturer script)
+// Calculate statistics
 $totalSubmissions = count(array_filter($submissions, fn($s) => !empty($s['submission_id'])));
-$pendingSubmissions = count(array_filter($submissions, fn($s) => empty($s['submission_id'])));
 $completedSubmissions = $totalSubmissions;
-$completedPercentage = count($submissions) > 0 ? round(($completedSubmissions / count($submissions)) * 100) : 0;
-$uncompletedSubmissions = $pendingSubmissions;
+$completedPercentage = $expectedSubmissions > 0 ? round(($completedSubmissions / $expectedSubmissions) * 100) : 0;
+$uncompletedSubmissions = $expectedSubmissions - $totalSubmissions;
 
 // Check for invalid IDs
 $invalid_ids_found = false;
@@ -365,7 +435,6 @@ $conn->close();
                         <a class="collapse-item" href="coorviewstudentdetails.php">View Student Details</a>
                         <a class="collapse-item" href="coormanagerubrics.php">Manage Rubrics</a>
                         <a class="collapse-item" href="coorassignassessment.php">Assign Assessment</a>
-                        <!-- <a class="collapse-item" href="coorevaluatestudent.php">Evaluate Students</a> -->
                     </div>
                 </div>
             </li>
@@ -380,7 +449,6 @@ $conn->close();
                         <h6 class="collapse-header">Support Tools:</h6>
                         <a class="collapse-item" href="coormanageannouncement.php">Manage Announcement</a>
                         <a class="collapse-item" href="coormanageteachingmaterials.php">Manage Teaching <br>Materials</a>
-                        <!-- <a class="collapse-item" href="coorsetsemester.php">Manage Semester</a> -->
                     </div>
                 </div>
             </li>
@@ -423,7 +491,7 @@ $conn->close();
                         <h1 class="h3 mb-0 text-gray-800">View Student Submissions</h1>
                     </div>
                     <?= $message ?>
-                    <!-- Statistics Cards (Updated to match lecturer script) -->
+                    <!-- Statistics Cards -->
                     <div class="row">
                         <div class="col-xl-3 col-md-6 mb-4">
                             <div class="card border-left-primary shadow h-100 py-2">
@@ -431,13 +499,13 @@ $conn->close();
                                     <div class="row no-gutters align-items-center">
                                         <div class="col mr-2">
                                             <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
-                                                Total Submissions</div>
+                                                Expected Submissions</div>
                                             <div class="h5 mb-0 font-weight-bold text-gray-800">
-                                                <?= htmlspecialchars($totalSubmissions) ?> Submissions
+                                                <?= htmlspecialchars($expectedSubmissions) ?> Submissions
                                             </div>
                                         </div>
                                         <div class="col-auto">
-                                            <i class="fas fa-calendar fa-2x text-gray-300"></i>
+                                            <i class="fas fa-tasks fa-2x text-gray-300"></i>
                                         </div>
                                     </div>
                                 </div>
@@ -449,13 +517,13 @@ $conn->close();
                                     <div class="row no-gutters align-items-center">
                                         <div class="col mr-2">
                                             <div class="text-xs font-weight-bold text-success text-uppercase mb-1">
-                                                Pending Submissions</div>
+                                                Total Submissions</div>
                                             <div class="h5 mb-0 font-weight-bold text-gray-800">
-                                                <?= htmlspecialchars($pendingSubmissions) ?> Pending
+                                                <?= htmlspecialchars($totalSubmissions) ?> Submissions
                                             </div>
                                         </div>
                                         <div class="col-auto">
-                                            <i class="fas fa-hourglass-start fa-2x text-gray-300"></i>
+                                            <i class="fas fa-file-upload fa-2x text-gray-300"></i>
                                         </div>
                                     </div>
                                 </div>
@@ -509,7 +577,7 @@ $conn->close();
                             </div>
                         </div>
                     </div>
-                    <!-- Filters Card -->
+                    <!-- Filter Card -->
                     <div class="card shadow mb-4">
                         <div class="card-header py-3">
                             <h6 class="m-0 font-weight-bold text-primary">Filter Submissions</h6>
@@ -521,37 +589,35 @@ $conn->close();
                                         <label for="semester">Semester</label>
                                         <select class="form-control" id="semester" name="semester">
                                             <?php foreach ($semesters as $semester): ?>
-                                                <option value="<?= htmlspecialchars($semester['semester_name']) ?>" <?= $selectedSemester === $semester['semester_name'] ? 'selected' : '' ?>>
+                                                <option value="<?= htmlspecialchars($semester['semester_name']) ?>" 
+                                                        <?= $selectedSemester === $semester['semester_name'] ? 'selected' : '' ?>>
                                                     <?= htmlspecialchars($semester['semester_name']) ?>
                                                 </option>
                                             <?php endforeach; ?>
                                         </select>
                                     </div>
                                     <div class="col-md-3 mb-3">
-                                        <label for="student_name">Username</label>
-                                        <input type="text" class="form-control" id="student_name" name="student_name" value="<?= htmlspecialchars($searchStudent) ?>" placeholder="Enter student username">
+                                        <label for="username">Username</label>
+                                        <input type="text" class="form-control" id="username" name="username" 
+                                               value="<?= htmlspecialchars($searchUsername ?? '') ?>" placeholder="Enter student username">
                                     </div>
                                     <div class="col-md-3 mb-3">
                                         <label for="deliverable_id">Deliverable</label>
                                         <select class="form-control" id="deliverable_id" name="deliverable_id">
-                                            <option value="0">-- All Deliverables --</option>
+                                            <option value="0" <?= $selectedDeliverable === 0 ? 'selected' : '' ?>>-- All Deliverables --</option>
                                             <?php foreach ($deliverables as $deliverable): ?>
-                                                <option value="<?= $deliverable['id'] ?>" <?= $selectedDeliverable === $deliverable['id'] ? 'selected' : '' ?>>
+                                                <option value="<?= $deliverable['id'] ?>" 
+                                                        <?= $selectedDeliverable === $deliverable['id'] ? 'selected' : '' ?>>
                                                     <?= htmlspecialchars($deliverable['name']) ?>
                                                 </option>
                                             <?php endforeach; ?>
                                         </select>
                                     </div>
                                     <div class="col-md-3 mb-3">
-                                        <label for="group_id">Group</label>
-                                        <select class="form-control" id="group_id" name="group_id">
-                                            <option value="0">-- All Groups --</option>
-                                            <?php foreach ($groups as $group): ?>
-                                                <option value="<?= $group['id'] ?>" <?= $selectedGroup === $group['id'] ? 'selected' : '' ?>>
-                                                    <?= htmlspecialchars($group['name']) ?>
-                                                </option>
-                                            <?php endforeach; ?>
-                                        </select>
+                                        <label for="group_name">Group Name</label>
+                                        <input type="text" class="form-control" id="group_name" name="group_name" 
+                                               value="<?= htmlspecialchars($groupNumberDisplay) ?>" 
+                                               placeholder="<?= htmlspecialchars($groupPrefix) ?>XXX">
                                     </div>
                                 </div>
                                 <button type="submit" class="btn btn-primary">Apply Filters</button>
@@ -623,7 +689,7 @@ $conn->close();
             <footer class="sticky-footer bg-white">
                 <div class="container my-auto">
                     <div class="copyright text-center my-auto">
-                        <span>Copyright © FYPCollabor8 2025</span>
+                        <span>Copyright &copy; FYPCollabor8 2025</span>
                     </div>
                 </div>
             </footer>
@@ -640,7 +706,7 @@ $conn->close();
                 <div class="modal-header">
                     <h5 class="modal-title" id="exampleModalLabel">Ready to Leave?</h5>
                     <button class="close" type="button" data-dismiss="modal" aria-label="Close">
-                        <span aria-hidden="true">×</span>
+                        <span aria-hidden="true">&times;</span>
                     </button>
                 </div>
                 <div class="modal-body">Select "Logout" below if you are ready to end your current session.</div>
@@ -661,6 +727,7 @@ $conn->close();
     <script src="js/demo/datatables-demo.js"></script>
     <script>
         $(document).ready(function() {
+            // Initialize DataTable
             if (!$.fn.DataTable.isDataTable('#dataTable')) {
                 $('#dataTable').DataTable({
                     responsive: true,
@@ -671,6 +738,46 @@ $conn->close();
                     autoWidth: false
                 });
             }
+
+            // Update group name input when semester changes
+            document.getElementById('semester').addEventListener('change', function() {
+                const semester = this.value;
+                const [month, year] = semester.split(' ');
+                const prefix = year + month;
+                const input = document.getElementById('group_name');
+                const currentValue = input.value;
+                const number = currentValue.replace(/^\d{4}[A-Za-z]+/, ''); // Extract number
+                input.value = number ? prefix + number : '';
+                input.placeholder = prefix + 'XXX';
+            });
+
+            // Initialize input on page load
+            window.addEventListener('load', function() {
+                const semester = document.getElementById('semester').value;
+                const [month, year] = semester.split(' ');
+                const prefix = year + month;
+                const input = document.getElementById('group_name');
+                const currentValue = input.value;
+                if (!currentValue) {
+                    input.value = '';
+                } else if (!currentValue.startsWith(prefix)) {
+                    const number = currentValue.replace(/^\d{4}[A-Za-z]+/, '');
+                    input.value = number ? prefix + number : '';
+                }
+                input.placeholder = prefix + 'XXX';
+            });
+
+            // Ensure only valid input (prefix + number or number alone)
+            document.getElementById('group_name').addEventListener('input', function() {
+                const semester = document.getElementById('semester').value;
+                const [month, year] = semester.split(' ');
+                const prefix = year + month;
+                let value = this.value;
+                if (value && !value.startsWith(prefix)) {
+                    value = prefix + value.replace(/[^0-9]/g, '');
+                    this.value = value;
+                }
+            });
         });
     </script>
 </body>
